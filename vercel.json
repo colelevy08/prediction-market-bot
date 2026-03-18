@@ -1,5 +1,10 @@
 {
   "buildCommand": "cd frontend && npm install && npm run build",
   "outputDirectory": "frontend/dist",
-  "framework": null
+  "framework": null,
+  "build": {
+    "env": {
+      "VITE_API_URL": "https://prediction-market-bot-railway-production.up.railway.app"
+    }
+  }
 }
