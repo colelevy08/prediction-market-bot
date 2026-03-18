@@ -21,7 +21,7 @@ from typing import Any
 import numpy as np
 
 from bot.config import config
-from bot.kalshi_client import KalshiClient
+from bot.kalshi_client import KalshiClient, _dollars_to_cents, _parse_fp
 from bot.models import Event, Market, Side
 from bot.rf_model import extract_features, FEATURE_NAMES, PredictionModel, RFSignalGenerator
 from bot.performance import PerformanceTracker, TradeRecord
@@ -41,9 +41,9 @@ class HistoricalDataFetcher:
     def fetch_settled_markets(self, limit: int = 200) -> list[dict]:
         """
         Fetch settled (resolved) markets with their outcomes.
+        Reconstructs pre-settlement features from trade history so the model
+        can learn from realistic price/volume data instead of post-settlement zeros.
         Paginates through multiple pages to get up to `limit` samples.
-
-        Returns list of dicts with market data + result (yes/no).
         """
         settled = []
         cursor = None
@@ -75,30 +75,72 @@ class HistoricalDataFetcher:
                     if result not in ("yes", "no"):
                         continue
 
+                    ticker = m.get("ticker", "")
+                    volume = _parse_fp(m.get("volume_fp")) or m.get("volume", 0) or 0
+                    last_price = _dollars_to_cents(m.get("last_price_dollars")) or 0
+                    prev_price = _dollars_to_cents(m.get("previous_price_dollars")) or 0
+
+                    # Reconstruct pre-settlement prices from trade history
+                    trade_prices = []
+                    try:
+                        trades_data = self.kalshi._request("GET", "/markets/trades", params={
+                            "ticker": ticker, "limit": 50,
+                        })
+                        for t in trades_data.get("trades", []):
+                            tp = _dollars_to_cents(t.get("yes_price")) or t.get("yes_price", 0)
+                            if isinstance(tp, (int, float)) and 1 <= tp <= 99:
+                                trade_prices.append(int(tp))
+                    except Exception:
+                        pass
+
+                    # Use trade history to reconstruct realistic bid/ask/mid
+                    if trade_prices:
+                        avg_price = int(np.mean(trade_prices))
+                        spread = max(2, int(np.std(trade_prices) * 0.5)) if len(trade_prices) > 2 else 4
+                    elif last_price and 1 <= last_price <= 99:
+                        avg_price = last_price
+                        spread = 4
+                    elif prev_price and 1 <= prev_price <= 99:
+                        avg_price = prev_price
+                        spread = 6
+                    else:
+                        # Skip markets with no price data
+                        continue
+
+                    yes_bid = max(1, avg_price - spread // 2)
+                    yes_ask = min(99, avg_price + spread // 2)
+                    no_bid = max(1, 100 - yes_ask)
+                    no_ask = min(99, 100 - yes_bid)
+
                     market = Market(
-                        ticker=m.get("ticker", ""),
+                        ticker=ticker,
                         event_ticker=m.get("event_ticker", ""),
                         title=m.get("title", ""),
                         subtitle=m.get("subtitle", ""),
-                        yes_bid=m.get("yes_bid", 0),
-                        yes_ask=m.get("yes_ask", 0),
-                        no_bid=m.get("no_bid", 0),
-                        no_ask=m.get("no_ask", 0),
-                        volume=m.get("volume", 0),
-                        open_interest=m.get("open_interest", 0),
+                        yes_bid=yes_bid,
+                        yes_ask=yes_ask,
+                        no_bid=no_bid,
+                        no_ask=no_ask,
+                        volume=int(volume) if isinstance(volume, (int, float)) else 0,
+                        open_interest=_parse_fp(m.get("open_interest_fp")) or m.get("open_interest", 0) or 0,
                         status="settled",
                         close_time=m.get("close_time", ""),
                         result=result,
                         category=m.get("category", ""),
+                        last_price=last_price,
+                        prev_price=prev_price,
                     )
 
-                    features = extract_features(market, event)
+                    # Build features with the reconstructed prices
+                    history = [{"yes_mid": p, "volume": volume} for p in trade_prices] if trade_prices else None
+                    features = extract_features(market, event, history)
                     settled.append({
                         "market": market,
                         "event": event,
                         "features": features,
                         "outcome": 1 if result == "yes" else 0,
                         "result": result,
+                        "n_trades": len(trade_prices),
                     })
 
             # Check for next page cursor

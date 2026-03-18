@@ -17,6 +17,66 @@ from bot.models import (
 )
 
 
+def _dollars_to_cents(val) -> int:
+    """Convert a Kalshi dollars string/float/None to integer cents (0-100)."""
+    if val is None:
+        return 0
+    try:
+        return int(round(float(val) * 100))
+    except (ValueError, TypeError):
+        return 0
+
+
+def _parse_fp(val) -> int:
+    """Parse a _fp (floating point) field to int."""
+    if val is None:
+        return 0
+    try:
+        return int(float(val))
+    except (ValueError, TypeError):
+        return 0
+
+
+def _parse_market(m: dict) -> "Market":
+    """Parse a market dict from the Kalshi API, handling both old and new field names."""
+    # New API uses _dollars suffix; old API uses bare names
+    yes_bid = _dollars_to_cents(m.get("yes_bid_dollars")) or m.get("yes_bid", 0) or 0
+    yes_ask = _dollars_to_cents(m.get("yes_ask_dollars")) or m.get("yes_ask", 0) or 0
+    no_bid = _dollars_to_cents(m.get("no_bid_dollars")) or m.get("no_bid", 0) or 0
+    no_ask = _dollars_to_cents(m.get("no_ask_dollars")) or m.get("no_ask", 0) or 0
+    volume = _parse_fp(m.get("volume_fp")) or m.get("volume", 0) or 0
+    open_interest = _parse_fp(m.get("open_interest_fp")) or m.get("open_interest", 0) or 0
+    last_price = _dollars_to_cents(m.get("last_price_dollars")) or 0
+    prev_price = _dollars_to_cents(m.get("previous_price_dollars")) or 0
+
+    # Ensure ints
+    yes_bid = int(yes_bid) if isinstance(yes_bid, (int, float)) else 0
+    yes_ask = int(yes_ask) if isinstance(yes_ask, (int, float)) else 0
+    no_bid = int(no_bid) if isinstance(no_bid, (int, float)) else 0
+    no_ask = int(no_ask) if isinstance(no_ask, (int, float)) else 0
+    volume = int(volume) if isinstance(volume, (int, float)) else 0
+    open_interest = int(open_interest) if isinstance(open_interest, (int, float)) else 0
+
+    return Market(
+        ticker=m.get("ticker", ""),
+        event_ticker=m.get("event_ticker", ""),
+        title=m.get("title", ""),
+        subtitle=m.get("subtitle", ""),
+        yes_bid=yes_bid,
+        yes_ask=yes_ask,
+        no_bid=no_bid,
+        no_ask=no_ask,
+        volume=volume,
+        open_interest=open_interest,
+        status=m.get("status", "open"),
+        close_time=m.get("close_time", ""),
+        category=m.get("category", ""),
+        result=m.get("result", ""),
+        last_price=last_price,
+        prev_price=prev_price,
+    )
+
+
 class KalshiClient:
     """Client for the Kalshi Trade API v2."""
 
@@ -92,21 +152,7 @@ class KalshiClient:
         for ev in data.get("events", []):
             markets = []
             for m in ev.get("markets", []):
-                markets.append(Market(
-                    ticker=m.get("ticker", ""),
-                    event_ticker=m.get("event_ticker", ""),
-                    title=m.get("title", ""),
-                    subtitle=m.get("subtitle", ""),
-                    yes_bid=m.get("yes_bid", 0),
-                    yes_ask=m.get("yes_ask", 0),
-                    no_bid=m.get("no_bid", 0),
-                    no_ask=m.get("no_ask", 0),
-                    volume=m.get("volume", 0),
-                    open_interest=m.get("open_interest", 0),
-                    status=m.get("status", "open"),
-                    close_time=m.get("close_time", ""),
-                    category=m.get("category", ""),
-                ))
+                markets.append(_parse_market(m))
             events.append(Event(
                 event_ticker=ev.get("event_ticker", ""),
                 title=ev.get("title", ""),
@@ -123,21 +169,7 @@ class KalshiClient:
         try:
             data = self._request("GET", f"/markets/{ticker}")
             m = data.get("market", {})
-            return Market(
-                ticker=m.get("ticker", ""),
-                event_ticker=m.get("event_ticker", ""),
-                title=m.get("title", ""),
-                subtitle=m.get("subtitle", ""),
-                yes_bid=m.get("yes_bid", 0),
-                yes_ask=m.get("yes_ask", 0),
-                no_bid=m.get("no_bid", 0),
-                no_ask=m.get("no_ask", 0),
-                volume=m.get("volume", 0),
-                open_interest=m.get("open_interest", 0),
-                status=m.get("status", "open"),
-                close_time=m.get("close_time", ""),
-                category=m.get("category", ""),
-            )
+            return _parse_market(m)
         except httpx.HTTPStatusError:
             return None
 

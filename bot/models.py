@@ -39,6 +39,8 @@ class Market(BaseModel):
     close_time: str = ""
     result: str = ""
     category: str = ""
+    last_price: int = 0       # last trade price in cents
+    prev_price: int = 0       # previous day price in cents
 
     @property
     def mid_price_yes(self) -> float:
