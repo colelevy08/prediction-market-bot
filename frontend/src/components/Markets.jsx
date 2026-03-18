@@ -61,7 +61,7 @@ function MarketDetail({ ticker, onClose }) {
           <div className="text-[10px] uppercase tracking-widest text-text-secondary">
             <Tooltip text="Probability estimated by the Random Forest model">Model</Tooltip>
           </div>
-          <div className="text-2xl font-bold font-mono text-white">{(analysis.model_probability * 100).toFixed(1)}%</div>
+          <div className="text-2xl font-bold font-mono text-text-primary">{(analysis.model_probability * 100).toFixed(1)}%</div>
         </div>
         <div className="stat-card text-center" style={{ '--accent-color': 'rgb(var(--color-blue))' }}>
           <div className="text-[10px] uppercase tracking-widest text-text-secondary">
@@ -117,13 +117,13 @@ function MarketDetail({ ticker, onClose }) {
             <div className="text-[9px] uppercase tracking-widest text-text-secondary">
               <Tooltip text={item.tooltip}>{item.label}</Tooltip>
             </div>
-            <div className={`font-mono ${item.color || 'text-white'}`}>{item.val}</div>
+            <div className={`font-mono ${item.color || 'text-text-primary'}`}>{item.val}</div>
           </div>
         ))}
       </div>
 
       <details className="text-xs">
-        <summary className="text-text-secondary cursor-pointer hover:text-white transition-colors">
+        <summary className="text-text-secondary cursor-pointer hover:text-text-primary transition-colors">
           All {Object.keys(analysis.features || {}).length} features
         </summary>
         <div className="mt-2 grid grid-cols-2 md:grid-cols-4 gap-1.5 font-mono">
@@ -255,7 +255,7 @@ export default function Markets() {
               <tbody>
                 {allMarkets.map((m, i) => (
                   <tr key={`${m.ticker}-${i}`} className="table-row even:bg-surface-2/30">
-                    <td className="table-cell font-mono text-white text-[10px]">{m.ticker}</td>
+                    <td className="table-cell font-mono text-text-primary text-[10px]">{m.ticker}</td>
                     <td className="table-cell max-w-[180px] truncate" title={m.title}>{m.title}</td>
                     <td className="table-cell max-w-[140px] truncate text-text-secondary" title={m.event_title}>{m.event_title}</td>
                     <td className="table-cell text-right font-mono text-accent-green">{m.yes_bid}c</td>

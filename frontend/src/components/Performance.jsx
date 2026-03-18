@@ -38,7 +38,7 @@ import { api } from '../api';
 import { LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, BarChart, Bar, Cell } from 'recharts';
 import Tooltip from './Tooltip';
 
-function MetricCard({ label, tooltip, value, sub, color = 'text-white', formula, accentColor, progress = null, icon = null }) {
+function MetricCard({ label, tooltip, value, sub, color = 'text-text-primary', formula, accentColor, progress = null, icon = null }) {
   return (
     <div className="stat-card" style={{ '--accent-color': accentColor || 'rgb(var(--color-text-muted))' }}>
       <div className="flex items-center justify-between mb-2">
@@ -185,11 +185,11 @@ export default function Performance() {
               <h3 className="section-title mb-4">Equity Curve</h3>
               <ResponsiveContainer width="100%" height={250}>
                 <LineChart data={equityCurve}>
-                  <XAxis dataKey="trade_num" tick={{ fontSize: 10, fill: '#666' }} axisLine={{ stroke: '#1a1a1a' }} />
-                  <YAxis tick={{ fontSize: 10, fill: '#666' }} tickFormatter={v => `$${(v / 100).toFixed(0)}`} axisLine={{ stroke: '#1a1a1a' }} />
+                  <XAxis dataKey="trade_num" tick={{ fontSize: 10, fill: '#71717a' }} axisLine={{ stroke: '#1e1e22' }} />
+                  <YAxis tick={{ fontSize: 10, fill: '#71717a' }} tickFormatter={v => `$${(v / 100).toFixed(0)}`} axisLine={{ stroke: '#1e1e22' }} />
                   <RechartsTooltip contentStyle={chartTooltipStyle}
                     formatter={v => [`$${(v / 100).toFixed(2)}`, 'Equity']} />
-                  <Line type="monotone" dataKey="equity_cents" stroke="#00ff87" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="equity_cents" stroke="rgb(var(--color-green))" strokeWidth={2} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -197,13 +197,13 @@ export default function Performance() {
               <h3 className="section-title mb-4">P&L Per Trade</h3>
               <ResponsiveContainer width="100%" height={250}>
                 <BarChart data={pnlBuckets}>
-                  <XAxis dataKey="trade" tick={{ fontSize: 10, fill: '#666' }} axisLine={{ stroke: '#1a1a1a' }} />
-                  <YAxis tick={{ fontSize: 10, fill: '#666' }} tickFormatter={v => `$${(v / 100).toFixed(0)}`} axisLine={{ stroke: '#1a1a1a' }} />
+                  <XAxis dataKey="trade" tick={{ fontSize: 10, fill: '#71717a' }} axisLine={{ stroke: '#1e1e22' }} />
+                  <YAxis tick={{ fontSize: 10, fill: '#71717a' }} tickFormatter={v => `$${(v / 100).toFixed(0)}`} axisLine={{ stroke: '#1e1e22' }} />
                   <RechartsTooltip contentStyle={chartTooltipStyle}
                     formatter={v => [`$${(v / 100).toFixed(2)}`, 'P&L']} />
                   <Bar dataKey="pnl" radius={[2, 2, 0, 0]}>
                     {pnlBuckets.map((entry, i) => (
-                      <Cell key={i} fill={entry.won ? '#00ff87' : '#ff3b3b'} />
+                      <Cell key={i} fill={entry.won ? 'rgb(var(--color-green))' : '#ff3b3b'} />
                     ))}
                   </Bar>
                 </BarChart>

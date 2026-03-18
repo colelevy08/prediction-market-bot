@@ -178,7 +178,8 @@ export default function Dashboard({ status, scanResult, onScan, scanning }) {
             {topOpportunities.map((sig, i) => {
               const edgePct = sig.edge * 100;
               const contractPrice = sig.market_probability;
-              const contracts = Math.floor(betAmount / (contractPrice * 100));
+              const validPrice = contractPrice > 0;
+              const contracts = validPrice ? Math.floor(betAmount / (contractPrice * 100)) : 0;
               const costBasis = contracts * contractPrice * 100;
               const payout = contracts * 100;
               const profit = payout - costBasis;
@@ -229,25 +230,31 @@ export default function Dashboard({ status, scanResult, onScan, scanning }) {
                     <div className="text-[9px] uppercase tracking-widest text-accent-green/70 mb-2">
                       Earning Potential @ ${betAmount} bet
                     </div>
-                    <div className="flex items-end justify-between">
-                      <div>
-                        <div className="text-xs text-text-muted">
-                          {contracts} contracts @ {(contractPrice * 100).toFixed(0)}¢
+                    {!validPrice ? (
+                      <div className="text-sm text-text-muted font-mono">N/A</div>
+                    ) : (
+                      <>
+                        <div className="flex items-end justify-between">
+                          <div>
+                            <div className="text-xs text-text-muted">
+                              {contracts} contracts @ {(contractPrice * 100).toFixed(0)}¢
+                            </div>
+                            <div className="text-2xl font-bold font-mono text-accent-green">
+                              +${profit.toFixed(2)}
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-[10px] text-text-muted">ROI</div>
+                            <div className={`font-mono text-lg font-bold ${roi >= 100 ? 'text-accent-green' : roi >= 50 ? 'text-accent-yellow' : 'text-text-primary'}`}>
+                              {roi.toFixed(0)}%
+                            </div>
+                          </div>
                         </div>
-                        <div className="text-2xl font-bold font-mono text-accent-green">
-                          +${profit.toFixed(2)}
+                        <div className="text-[9px] text-text-muted mt-1.5">
+                          If model is correct: ${payout.toFixed(2)} payout on ${costBasis.toFixed(2)} invested
                         </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-[10px] text-text-muted">ROI</div>
-                        <div className={`font-mono text-lg font-bold ${roi >= 100 ? 'text-accent-green' : roi >= 50 ? 'text-accent-yellow' : 'text-text-primary'}`}>
-                          {roi.toFixed(0)}%
-                        </div>
-                      </div>
-                    </div>
-                    <div className="text-[9px] text-text-muted mt-1.5">
-                      If model is correct: ${payout.toFixed(2)} payout on ${costBasis.toFixed(2)} invested
-                    </div>
+                      </>
+                    )}
                   </div>
                 </div>
               );
@@ -266,7 +273,7 @@ export default function Dashboard({ status, scanResult, onScan, scanning }) {
                 <XAxis dataKey="trade_num" tick={{ fontSize: 10, fill: '#71717a' }} axisLine={{ stroke: '#1e1e22' }} tickLine={false} />
                 <YAxis tick={{ fontSize: 10, fill: '#71717a' }} tickFormatter={v => `$${(v / 100).toFixed(0)}`} axisLine={{ stroke: '#1e1e22' }} tickLine={false} />
                 <RTooltip contentStyle={CHART_TOOLTIP} formatter={(v) => [`$${(v / 100).toFixed(2)}`, 'Equity']} />
-                <Line type="monotone" dataKey="equity_cents" stroke="var(--color-green)" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="equity_cents" stroke="rgb(var(--color-green))" strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           ) : (

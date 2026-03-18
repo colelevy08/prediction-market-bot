@@ -38,7 +38,7 @@ import csv
 import io
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -59,7 +59,7 @@ from bot.arbitrage import detect_arbitrage
 from bot.backtester import Backtester, BacktestConfig, HistoricalDataFetcher, PaperTrader
 from bot.database import Database
 from bot.notifier import Notifier
-from bot.models import OrderRequest, Side, TradingSignal
+from bot.models import OrderAction, OrderRequest, Side, TradingSignal
 
 logger = logging.getLogger("predictionbot")
 
@@ -171,7 +171,7 @@ async def _auto_scan_job():
             }
             _cache["auto_scan_log"].append(scan_entry)
             if db:
-                db.insert_scan_log("paper", total_markets, len(paper_entries), len(paper_exits), open_pos)
+                db.insert_scan_log("paper", len(paper_entries) + len(paper_exits), len(paper_entries), len(paper_exits), open_pos)
 
         # ── Live trading scan (only when auto_trade is explicitly enabled) ──
         # Live trading is a separate opt-in: auto_scan must be on AND auto_trade
@@ -191,7 +191,7 @@ async def _auto_scan_job():
                         side=Side(sig.side.value),
                         price_cents=int(sig.market_probability * 100),
                         count=1,
-                        action="sell",
+                        action=OrderAction.SELL,
                     )
                     kalshi.place_order(order)
                     risk_manager.record_trade()
@@ -327,18 +327,22 @@ async def lifespan(app: FastAPI):
 
     scheduler.start()
 
-    # Auto-train model on startup so it's ready immediately
-    try:
-        if kalshi and config.validate_kalshi() and paper_trader:
-            logger.info("Startup: training model on settled market data...")
-            fetcher = HistoricalDataFetcher(kalshi)
-            settled = fetcher.fetch_settled_markets(limit=1000)
-            if settled:
-                result = paper_trader.train_model(settled)
-                logger.info(f"Startup training complete: {result.get('total_cumulative_samples', 0)} samples, "
-                            f"CV accuracy: {result.get('cv_accuracy', 0):.3f}")
-    except Exception as e:
-        logger.error(f"Startup training failed (non-fatal): {e}")
+    # Schedule startup training as a background job with a short delay so the
+    # server can accept connections and pass Railway healthchecks first.
+    async def _startup_train():
+        try:
+            if kalshi and config.validate_kalshi() and paper_trader:
+                logger.info("Background startup: training model on settled market data...")
+                fetcher = HistoricalDataFetcher(kalshi)
+                settled = await asyncio.to_thread(fetcher.fetch_settled_markets, 1000)
+                if settled:
+                    result = await asyncio.to_thread(paper_trader.train_model, settled)
+                    logger.info(f"Startup training complete: {result.get('total_cumulative_samples', 0)} samples, "
+                                f"CV accuracy: {result.get('cv_accuracy', 0):.3f}")
+        except Exception as e:
+            logger.error(f"Startup training failed (non-fatal): {e}")
+
+    scheduler.add_job(_startup_train, "date", run_date=datetime.now(timezone.utc) + timedelta(seconds=5), id="startup_train")
 
     yield
 
@@ -536,7 +540,6 @@ async def run_scan(req: ScanRequest):
             validated_signals.append(sig_dict)
 
         # Cache results
-        from datetime import datetime, timezone
         _cache["events"] = [e.model_dump() for e in events]
         _cache["signals"] = validated_signals
         _cache["exit_signals"] = [s.model_dump() for s in exit_signals]

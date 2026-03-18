@@ -787,9 +787,10 @@ class PaperTrader:
 
                 if pos.side == "yes":
                     pnl = (exit_price - pos.entry_price) * 100 * pos.contracts
+                    self.balance_cents += int(exit_price * 100 * pos.contracts)
                 else:
                     pnl = (pos.entry_price - exit_price) * 100 * pos.contracts
-                self.balance_cents += int(exit_price * 100 * pos.contracts) + int(pnl)
+                    self.balance_cents += int((1 - exit_price) * 100 * pos.contracts)
 
                 reason = "Target" if hit_target else ("Expiry" if hit_expiry else "Settled")
                 exits.append({

@@ -50,12 +50,12 @@ import Tooltip from './Tooltip';
 
 export default function Settings({ status, onRefresh }) {
   const [config, setConfig] = useState({
-    max_bet_amount_cents: status?.config?.max_bet_amount_cents || 2500,
-    min_edge_threshold: status?.config?.min_edge_threshold || 0.08,
-    max_daily_loss_cents: status?.config?.max_daily_loss_cents || 10000,
-    max_open_positions: status?.config?.max_open_positions || 10,
-    max_events_to_analyze: status?.config?.max_events_to_analyze || 20,
-    kelly_fraction: status?.config?.kelly_fraction || 0.5,
+    max_bet_amount_cents: status?.config?.max_bet_amount_cents ?? 2500,
+    min_edge_threshold: status?.config?.min_edge_threshold ?? 0.08,
+    max_daily_loss_cents: status?.config?.max_daily_loss_cents ?? 10000,
+    max_open_positions: status?.config?.max_open_positions ?? 10,
+    max_events_to_analyze: status?.config?.max_events_to_analyze ?? 20,
+    kelly_fraction: status?.config?.kelly_fraction ?? 0.5,
   });
   const [saved, setSaved] = useState(false);
   const [autoScan, setAutoScan] = useState(false);
@@ -199,7 +199,7 @@ export default function Settings({ status, onRefresh }) {
                   onChange={e => {
                     const val = parseFloat(e.target.value);
                     if (!isNaN(val)) {
-                      setConfig(prev => ({ ...prev, [f.key]: f.div === 1 ? val : Math.round(val * f.div) }));
+                      setConfig(prev => ({ ...prev, [f.key]: f.div === 1 ? val : parseFloat((val * f.div).toFixed(4)) }));
                     }
                   }}
                   className="input" />
@@ -521,7 +521,7 @@ export default function Settings({ status, onRefresh }) {
                 </div>
               ) : (
                 <div className="text-[10px] text-text-muted text-center py-4">
-                  No shadow trades yet. The bot will trade when it finds edges above the {(config.min_edge_threshold * 100 / 0.01 * 0.01).toFixed(0)}% threshold.
+                  No shadow trades yet. The bot will trade when it finds edges above the {(config.min_edge_threshold * 100).toFixed(0)}% threshold.
                 </div>
               )}
 

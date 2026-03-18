@@ -58,7 +58,7 @@ import Tooltip from './Tooltip';
 
 const CHART_TOOLTIP_STYLE = { background: '#0c0c0e', border: '1px solid #1e1e22', borderRadius: 8, fontSize: 11, color: '#fff' };
 
-function StatCard({ label, value, sub, color = 'text-white', accentColor, tooltip }) {
+function StatCard({ label, value, sub, color = 'text-text-primary', accentColor, tooltip }) {
   const inner = (
     <div className="stat-card" style={accentColor ? { '--accent-color': accentColor } : undefined}>
       <div className="text-[10px] uppercase tracking-widest text-text-secondary mb-2">{label}</div>
@@ -314,7 +314,7 @@ export default function Testing() {
                 <StatCard label="Profit Factor" value={btResult.profit_factor}
                   tooltip={TIPS.profitFactor}
                   accentColor={btResult.profit_factor >= 1.5 ? 'rgb(var(--color-green))' : 'rgb(var(--color-text-muted))'}
-                  color={btResult.profit_factor >= 1.5 ? 'text-accent-green' : 'text-white'} />
+                  color={btResult.profit_factor >= 1.5 ? 'text-accent-green' : 'text-text-primary'} />
                 <StatCard label="CV Accuracy" value={`${(btResult.cv_accuracy * 100).toFixed(1)}%`}
                   tooltip={TIPS.cvAccuracy}
                   accentColor="var(--color-blue)"
@@ -349,11 +349,11 @@ export default function Testing() {
                   <h3 className="section-title mb-4">Equity Curve</h3>
                   <ResponsiveContainer width="100%" height={250}>
                     <LineChart data={btResult.equity_curve}>
-                      <XAxis dataKey="trade_num" tick={{ fontSize: 10, fill: '#666' }} axisLine={{ stroke: '#1a1a1a' }} />
-                      <YAxis tick={{ fontSize: 10, fill: '#666' }} tickFormatter={v => `$${(v / 100).toFixed(0)}`} axisLine={{ stroke: '#1a1a1a' }} />
+                      <XAxis dataKey="trade_num" tick={{ fontSize: 10, fill: '#71717a' }} axisLine={{ stroke: '#1e1e22' }} />
+                      <YAxis tick={{ fontSize: 10, fill: '#71717a' }} tickFormatter={v => `$${(v / 100).toFixed(0)}`} axisLine={{ stroke: '#1e1e22' }} />
                       <RechartsTooltip contentStyle={CHART_TOOLTIP_STYLE}
                         formatter={v => [`$${(v / 100).toFixed(2)}`, 'Equity']} />
-                      <Line type="monotone" dataKey="equity_cents" stroke="#00ff87" strokeWidth={2} dot={false} />
+                      <Line type="monotone" dataKey="equity_cents" stroke="rgb(var(--color-green))" strokeWidth={2} dot={false} />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
@@ -366,13 +366,13 @@ export default function Testing() {
                     <BarChart data={Object.entries(btResult.feature_importance).slice(0, 15).map(([name, imp]) => ({
                       name: name.replace(/_/g, ' '), importance: +(imp * 100).toFixed(1),
                     }))} layout="vertical">
-                      <XAxis type="number" tick={{ fontSize: 9, fill: '#666' }} axisLine={{ stroke: '#1a1a1a' }} />
-                      <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 9, fill: '#666' }} axisLine={{ stroke: '#1a1a1a' }} />
+                      <XAxis type="number" tick={{ fontSize: 9, fill: '#71717a' }} axisLine={{ stroke: '#1e1e22' }} />
+                      <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 9, fill: '#71717a' }} axisLine={{ stroke: '#1e1e22' }} />
                       <RechartsTooltip contentStyle={CHART_TOOLTIP_STYLE}
                         formatter={v => [`${v}%`, 'Importance']} />
                       <Bar dataKey="importance" radius={[0, 4, 4, 0]}>
                         {Object.entries(btResult.feature_importance).slice(0, 15).map((_, i) => (
-                          <Cell key={i} fill={i < 3 ? '#00ff87' : i < 7 ? '#ffffff' : '#444'} />
+                          <Cell key={i} fill={i < 3 ? 'rgb(var(--color-green))' : i < 7 ? 'rgb(var(--color-text-secondary))' : 'rgb(var(--color-text-muted))'} />
                         ))}
                       </Bar>
                     </BarChart>
@@ -585,7 +585,7 @@ export default function Testing() {
                   tooltip={TIPS.sharpe}
                   sub={paperState.metrics?.sharpe_label}
                   accentColor={(paperState.metrics?.sharpe_ratio ?? 0) >= 2 ? 'rgb(var(--color-green))' : 'rgb(var(--color-text-muted))'}
-                  color={(paperState.metrics?.sharpe_ratio ?? 0) >= 2 ? 'text-accent-green' : 'text-white'} />
+                  color={(paperState.metrics?.sharpe_ratio ?? 0) >= 2 ? 'text-accent-green' : 'text-text-primary'} />
                 <StatCard label="P&L"
                   tooltip="Total profit & loss across all completed shadow trades"
                   value={paperState.metrics?.total_pnl_cents != null ? `$${(paperState.metrics.total_pnl_cents / 100).toFixed(2)}` : '--'}
@@ -606,7 +606,7 @@ export default function Testing() {
                     {paperState.open_positions.map((p, i) => (
                       <div key={i} className="card-interactive flex items-center justify-between p-3 text-xs">
                         <div className="flex items-center gap-2">
-                          <span className="font-mono text-white">{p.ticker}</span>
+                          <span className="font-mono text-text-primary">{p.ticker}</span>
                           <span className={`badge ${p.side === 'yes' ? 'badge-green' : 'badge-red'}`}>
                             {p.side}
                           </span>
@@ -626,11 +626,11 @@ export default function Testing() {
                   <h3 className="section-title mb-4">Shadow Equity</h3>
                   <ResponsiveContainer width="100%" height={220}>
                     <LineChart data={paperState.equity_curve}>
-                      <XAxis dataKey="trade_num" tick={{ fontSize: 10, fill: '#666' }} axisLine={{ stroke: '#1a1a1a' }} />
-                      <YAxis tick={{ fontSize: 10, fill: '#666' }} tickFormatter={v => `$${(v / 100).toFixed(0)}`} axisLine={{ stroke: '#1a1a1a' }} />
+                      <XAxis dataKey="trade_num" tick={{ fontSize: 10, fill: '#71717a' }} axisLine={{ stroke: '#1e1e22' }} />
+                      <YAxis tick={{ fontSize: 10, fill: '#71717a' }} tickFormatter={v => `$${(v / 100).toFixed(0)}`} axisLine={{ stroke: '#1e1e22' }} />
                       <RechartsTooltip contentStyle={CHART_TOOLTIP_STYLE}
                         formatter={v => [`$${(v / 100).toFixed(2)}`, 'Equity']} />
-                      <Line type="monotone" dataKey="equity_cents" stroke="#00ff87" strokeWidth={2} dot={false} />
+                      <Line type="monotone" dataKey="equity_cents" stroke="rgb(var(--color-green))" strokeWidth={2} dot={false} />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
@@ -682,7 +682,7 @@ export default function Testing() {
                       <span className="text-accent-green">+{s.entries?.length ?? 0}</span>
                       <span className="text-accent-red">-{s.exits?.length ?? 0}</span>
                       <span className="text-text-secondary">{s.open_positions} open</span>
-                      <span className="text-white">${(s.balance_cents / 100).toFixed(2)}</span>
+                      <span className="text-text-primary">${(s.balance_cents / 100).toFixed(2)}</span>
                     </div>
                   </div>
                 ))}
