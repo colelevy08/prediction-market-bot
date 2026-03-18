@@ -327,6 +327,19 @@ async def lifespan(app: FastAPI):
 
     scheduler.start()
 
+    # Auto-train model on startup so it's ready immediately
+    try:
+        if kalshi and config.validate_kalshi() and paper_trader:
+            logger.info("Startup: training model on settled market data...")
+            fetcher = HistoricalDataFetcher(kalshi)
+            settled = fetcher.fetch_settled_markets(limit=1000)
+            if settled:
+                result = paper_trader.train_model(settled)
+                logger.info(f"Startup training complete: {result.get('total_cumulative_samples', 0)} samples, "
+                            f"CV accuracy: {result.get('cv_accuracy', 0):.3f}")
+    except Exception as e:
+        logger.error(f"Startup training failed (non-fatal): {e}")
+
     yield
 
     # Shutdown
