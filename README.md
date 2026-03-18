@@ -88,7 +88,14 @@ Open **http://localhost:5173** in your browser.
 
 ## Pages and Features
 
-The frontend has 7 tabs accessible from the top navigation bar. Each page is documented in full below, including every column header, stat card, and abbreviation.
+The frontend has 7 tabs accessible from the top navigation bar (or via keyboard shortcuts `1`-`7`). Each page is documented in full below, including every column header, stat card, and abbreviation.
+
+#### Global Features
+
+- **Keyboard shortcuts**: Press `1`-`7` to switch tabs instantly (disabled when typing in inputs).
+- **Toast notifications**: All success/error messages appear as non-blocking toast popups in the bottom-right corner (replacing browser alert dialogs).
+- **Theme toggle**: Switch between dark and light mode via the header button.
+- **Tooltips**: Hover over the info icon (ⓘ) on any label for a detailed explanation.
 
 ---
 
@@ -117,6 +124,14 @@ Four info cards summarizing the core strategy parameters:
 | **Sharpe** | The Sharpe Ratio -- a risk-adjusted return metric. Calculated as `(average return - risk-free rate) / standard deviation of returns`. Rated: < 1 = poor, 1-2 = good, > 2 = excellent. A badge shows the rating. |
 | **P&L** | Total Profit and Loss across all resolved trades, in dollars. Green when positive, red when negative. |
 | **Profit Factor** | Gross profit divided by gross loss. A value above 1 means you are making more than you are losing. Above 1.5 is good, above 2 is excellent. |
+
+#### Top 3 Opportunities
+
+Shows the three best trading opportunities from the latest scan, with a bet amount selector ($10-$500). For each opportunity, displays: ticker, model probability, market price, edge percentage, and estimated earning potential based on the selected bet amount. Auto-refreshes every 30 seconds.
+
+#### Last Updated Timestamp
+
+A relative time indicator (e.g., "Updated 2m ago") at the top of the dashboard showing when data was last refreshed. Automatically updates every 15 seconds.
 
 #### Equity Curve Chart
 
@@ -250,6 +265,14 @@ This helps you see concentration risk at a glance.
 
 Browse all live Kalshi markets, sorted by volume. Analyze any market in detail.
 
+#### Controls
+
+- **Search**: Type in the search box to filter markets by ticker or title (case-insensitive).
+- **Status filter pills**: Filter by market status (`All`, `open`, `closed`, `settled`).
+- **Sort dropdown**: Sort by Volume, Open Interest, Spread (tightest), Bid (highest/lowest), or Status.
+- **Event limit**: Fetch 10, 20, or 50 events.
+- **Refresh**: Reload market data.
+
 #### Markets Table
 
 | Column | Full Name | Description |
@@ -264,7 +287,7 @@ Browse all live Kalshi markets, sorted by volume. Analyze any market in detail.
 | **OI** | **Open Interest** | **The total number of outstanding contracts that have not yet been settled.** Every contract has a buyer and a seller; OI counts the number of these buyer-seller pairs that are still active (not yet resolved by the event outcome or closed by the participants). OI increases when a new buyer and a new seller create a fresh contract, and decreases when both sides close their positions or the market settles. High OI means many participants have money at stake in this market. OI is different from volume: volume counts every trade that happens (including day traders who buy and sell the same contract), while OI only counts contracts that are currently open. |
 | *(button)* | Analyze | Opens the Market Detail view for this ticker. |
 
-A dropdown lets you control how many events to fetch (10, 20, or 50), and a Refresh button reloads the data.
+The search box, sort dropdown, and status filter pills work together to narrow down the displayed markets.
 
 #### Market Detail View
 
@@ -359,7 +382,9 @@ Full log of all resolved trades with CSV export.
 | **Result** | Win/Loss | `Win` (green) or `Loss` (red) badge. |
 | **Notes** | Notes | Editable text field. Click to add personal notes about the trade. |
 
-An **Export CSV** button downloads the full trade history as a CSV file.
+Two export buttons:
+- **Export CSV**: Downloads live trade history as a CSV file.
+- **Export Paper CSV**: Downloads paper/shadow trade history as a CSV file.
 
 #### Sharpe Ratio Guide
 
@@ -809,6 +834,7 @@ prediction-market-bot/
 │   │       ├── Performance.jsx
 │   │       ├── Testing.jsx
 │   │       ├── Settings.jsx
+│   │       ├── Toast.jsx
 │   │       └── Tooltip.jsx
 │   └── package.json
 ├── supabase/               # Database schema SQL
