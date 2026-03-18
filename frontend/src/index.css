@@ -153,13 +153,23 @@ body {
 
   /* Tooltip container */
   .tooltip-wrapper {
-    @apply relative inline-flex items-center gap-1 cursor-help;
+    @apply relative inline-flex items-center gap-0.5 cursor-help;
+  }
+  .tooltip-wrapper .tooltip-icon {
+    @apply text-[9px] opacity-40 transition-opacity duration-150;
+  }
+  .tooltip-wrapper:hover .tooltip-icon {
+    @apply opacity-80;
   }
   .tooltip-wrapper .tooltip-text {
     @apply invisible opacity-0 absolute bottom-full left-1/2 -translate-x-1/2 mb-2
            px-3 py-2 bg-card border border-border rounded-lg text-[10px] text-text-secondary
-           whitespace-nowrap z-50 shadow-lg transition-all duration-150 pointer-events-none
+           z-50 shadow-lg transition-all duration-150 pointer-events-none
            font-normal normal-case tracking-normal;
+    white-space: normal;
+    max-width: 280px;
+    min-width: 160px;
+    line-height: 1.5;
   }
   .tooltip-wrapper:hover .tooltip-text {
     @apply visible opacity-100;

@@ -192,7 +192,6 @@ export default function Settings({ status, onRefresh }) {
                 <label className="text-[10px] uppercase tracking-widest text-text-secondary block mb-1">
                   <Tooltip text={f.tooltip}>
                     <span>{f.label}</span>
-                    <span className="text-text-muted text-[9px] ml-1">(?)</span>
                   </Tooltip>
                 </label>
                 <input type="number" step={f.step} min={f.min} max={f.max}
@@ -359,7 +358,6 @@ export default function Settings({ status, onRefresh }) {
               <label className="text-[10px] uppercase tracking-widest text-text-secondary block mb-1">
                 <Tooltip text="Seconds between each automatic full-Kalshi scan cycle. Must be >=30s to avoid rate limits">
                   <span>Scan Interval (seconds)</span>
-                  <span className="text-text-muted text-[9px] ml-1">(?)</span>
                 </Tooltip>
               </label>
               <input type="number" min={30} max={600} step={10} value={scanInterval}

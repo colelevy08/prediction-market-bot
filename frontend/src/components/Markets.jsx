@@ -144,11 +144,22 @@ function volumeColor(vol) {
   return 'text-text-muted';
 }
 
+const SORT_OPTIONS = [
+  { id: 'volume', label: 'Volume', fn: (a, b) => b.volume - a.volume },
+  { id: 'oi', label: 'Open Interest', fn: (a, b) => (b.open_interest || 0) - (a.open_interest || 0) },
+  { id: 'spread', label: 'Spread (tightest)', fn: (a, b) => (a.yes_ask - a.yes_bid) - (b.yes_ask - b.yes_bid) },
+  { id: 'bid_high', label: 'Bid (highest)', fn: (a, b) => b.yes_bid - a.yes_bid },
+  { id: 'bid_low', label: 'Bid (lowest)', fn: (a, b) => a.yes_bid - b.yes_bid },
+  { id: 'status', label: 'Status', fn: (a, b) => (a.status || '').localeCompare(b.status || '') },
+];
+
 export default function Markets() {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedTicker, setSelectedTicker] = useState(null);
   const [limit, setLimit] = useState(20);
+  const [sortBy, setSortBy] = useState('volume');
+  const [statusFilter, setStatusFilter] = useState('all');
 
   const loadEvents = async () => {
     setLoading(true);
@@ -159,24 +170,48 @@ export default function Markets() {
 
   useEffect(() => { loadEvents(); }, [limit]);
 
+  const sortFn = SORT_OPTIONS.find(s => s.id === sortBy)?.fn || SORT_OPTIONS[0].fn;
   const allMarkets = events.flatMap(e =>
     (e.markets || []).map(m => ({ ...m, event_title: e.title }))
-  ).sort((a, b) => b.volume - a.volume);
+  ).filter(m => statusFilter === 'all' || m.status === statusFilter)
+   .sort(sortFn);
+
+  const statuses = [...new Set(events.flatMap(e => (e.markets || []).map(m => m.status)).filter(Boolean))];
 
   return (
     <div className="space-y-6">
       {selectedTicker && <MarketDetail ticker={selectedTicker} onClose={() => setSelectedTicker(null)} />}
 
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <h2 className="section-title">
           Markets ({allMarkets.length})
         </h2>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Status filter pills */}
+          <div className="flex items-center gap-0.5 bg-surface-2 border border-border rounded-lg p-0.5">
+            <button onClick={() => setStatusFilter('all')}
+              className={`px-2.5 py-1 text-[10px] font-semibold tracking-wide uppercase rounded-md transition-all ${
+                statusFilter === 'all' ? 'bg-accent-green text-black' : 'text-text-muted hover:text-text-secondary'
+              }`}>All</button>
+            {statuses.map(s => (
+              <button key={s} onClick={() => setStatusFilter(s)}
+                className={`px-2.5 py-1 text-[10px] font-semibold tracking-wide uppercase rounded-md transition-all ${
+                  statusFilter === s ? 'bg-accent-green text-black' : 'text-text-muted hover:text-text-secondary'
+                }`}>{s}</button>
+            ))}
+          </div>
+          {/* Sort */}
+          <select value={sortBy} onChange={e => setSortBy(e.target.value)}
+            className="input w-auto py-1.5 text-xs">
+            {SORT_OPTIONS.map(s => (
+              <option key={s.id} value={s.id}>{s.label}</option>
+            ))}
+          </select>
           <select value={limit} onChange={e => setLimit(+e.target.value)}
             className="input w-auto py-1.5 text-xs">
-            <option value={10}>10</option>
-            <option value={20}>20</option>
-            <option value={50}>50</option>
+            <option value={10}>10 events</option>
+            <option value={20}>20 events</option>
+            <option value={50}>50 events</option>
           </select>
           <button onClick={loadEvents} disabled={loading}
             className="btn-secondary py-1.5">
@@ -211,6 +246,9 @@ export default function Markets() {
                   <th className="text-right table-cell">
                     <Tooltip text="Open Interest — total outstanding contracts not yet settled">OI</Tooltip>
                   </th>
+                  <th className="text-center table-cell">
+                    <Tooltip text="Market status — open, closed, or settled">Status</Tooltip>
+                  </th>
                   <th className="text-center table-cell"></th>
                 </tr>
               </thead>
@@ -225,6 +263,13 @@ export default function Markets() {
                     <td className="table-cell text-right font-mono">{m.yes_ask - m.yes_bid}c</td>
                     <td className={`table-cell text-right font-mono ${volumeColor(m.volume)}`}>{m.volume?.toLocaleString()}</td>
                     <td className="table-cell text-right font-mono">{m.open_interest?.toLocaleString()}</td>
+                    <td className="table-cell text-center">
+                      <span className={`badge ${
+                        m.status === 'open' ? 'badge-green' :
+                        m.status === 'closed' ? 'badge-yellow' :
+                        m.status === 'settled' ? 'badge-muted' : 'badge-muted'
+                      }`}>{m.status || '--'}</span>
+                    </td>
                     <td className="table-cell text-center">
                       <button onClick={() => setSelectedTicker(m.ticker)}
                         className="btn-ghost">

@@ -241,6 +241,32 @@ export default function Testing() {
       {/* ── BACKTESTER ── */}
       {mode === 'backtest' && (
         <>
+          <div className="card p-5 mb-0">
+            <h2 className="section-title mb-2">How the Backtester Works</h2>
+            <div className="text-xs text-text-secondary space-y-1.5 mb-4">
+              <p>The backtester simulates your trading strategy against <strong className="text-text-primary">real historical Kalshi market data</strong> to evaluate performance before risking real money.</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2">
+                {[
+                  { step: '1', title: 'Fetch Data', desc: 'Pulls up to 1,000 settled markets from Kalshi with known outcomes' },
+                  { step: '2', title: 'Train/Test Split', desc: 'Splits data 70/30 — trains the RF+GB ensemble on 70%, tests on 30%' },
+                  { step: '3', title: 'Simulate Trades', desc: 'Walks through test markets chronologically, entering when edge > threshold and exiting at target or expiry' },
+                  { step: '4', title: 'Calculate Metrics', desc: 'Computes win rate, Sharpe, P&L, drawdown, and equity curve from simulated trades' },
+                ].map(s => (
+                  <div key={s.step} className="bg-surface-2 border border-border-subtle rounded-lg p-2.5 flex items-start gap-2">
+                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-accent-green/15 text-accent-green text-[10px] font-bold shrink-0">{s.step}</span>
+                    <div>
+                      <div className="text-text-primary font-semibold text-[11px]">{s.title}</div>
+                      <div className="text-[10px] text-text-muted">{s.desc}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[10px] text-text-muted mt-2">
+                <strong className="text-accent-yellow">Parameter Sweep</strong> runs multiple backtests across entry threshold and confidence combinations, ranking results by Sharpe ratio to find the optimal configuration.
+              </p>
+            </div>
+          </div>
+
           <div className="card p-5">
             <h2 className="section-title mb-4">Configuration</h2>
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
@@ -273,6 +299,7 @@ export default function Testing() {
             <>
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
                 <StatCard label="Win Rate" value={`${(btResult.win_rate * 100).toFixed(1)}%`}
+                  tooltip="Percentage of backtest trades that were profitable"
                   sub={`${btResult.wins}W / ${btResult.losses}L`}
                   accentColor={btResult.win_rate >= 0.6 ? 'rgb(var(--color-green))' : 'rgb(var(--color-red))'}
                   color={btResult.win_rate >= 0.6 ? 'text-accent-green' : 'text-accent-red'} />
@@ -281,6 +308,7 @@ export default function Testing() {
                   accentColor={btResult.sharpe_ratio >= 2 ? 'rgb(var(--color-green))' : btResult.sharpe_ratio >= 1 ? 'rgb(var(--color-yellow))' : 'rgb(var(--color-red))'}
                   color={btResult.sharpe_ratio >= 2 ? 'text-accent-green' : btResult.sharpe_ratio >= 1 ? 'text-accent-yellow' : 'text-accent-red'} />
                 <StatCard label="P&L" value={`$${(btResult.total_pnl_cents / 100).toFixed(2)}`}
+                  tooltip="Total simulated profit & loss from the backtest run"
                   accentColor={btResult.total_pnl_cents > 0 ? 'rgb(var(--color-green))' : 'rgb(var(--color-red))'}
                   color={btResult.total_pnl_cents > 0 ? 'text-accent-green' : 'text-accent-red'} />
                 <StatCard label="Profit Factor" value={btResult.profit_factor}
@@ -544,10 +572,13 @@ export default function Testing() {
             <>
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
                 <StatCard label="Balance" value={`$${(paperState.balance_cents / 100).toFixed(2)}`}
+                  tooltip="Virtual cash balance for shadow trading — not real money"
                   accentColor="var(--color-green)" color="text-accent-green" />
                 <StatCard label="Positions" value={paperState.open_positions?.length ?? 0}
+                  tooltip="Number of open shadow positions the bot is currently holding"
                   accentColor="var(--color-blue)" />
                 <StatCard label="Trades" value={paperState.metrics?.total_trades ?? 0}
+                  tooltip="Total completed shadow trades (entries that have been exited)"
                   accentColor="var(--color-purple)"
                   sub={paperState.metrics?.total_trades > 0 ? `${paperState.metrics.wins}W / ${paperState.metrics.losses}L` : null} />
                 <StatCard label="Sharpe" value={paperState.metrics?.sharpe_ratio ?? '--'}
@@ -556,10 +587,12 @@ export default function Testing() {
                   accentColor={(paperState.metrics?.sharpe_ratio ?? 0) >= 2 ? 'rgb(var(--color-green))' : 'rgb(var(--color-text-muted))'}
                   color={(paperState.metrics?.sharpe_ratio ?? 0) >= 2 ? 'text-accent-green' : 'text-white'} />
                 <StatCard label="P&L"
+                  tooltip="Total profit & loss across all completed shadow trades"
                   value={paperState.metrics?.total_pnl_cents != null ? `$${(paperState.metrics.total_pnl_cents / 100).toFixed(2)}` : '--'}
                   accentColor={(paperState.metrics?.total_pnl_cents ?? 0) > 0 ? 'rgb(var(--color-green))' : 'rgb(var(--color-red))'}
                   color={(paperState.metrics?.total_pnl_cents ?? 0) > 0 ? 'text-accent-green' : 'text-accent-red'} />
                 <StatCard label="Model"
+                  tooltip="Trained = RF model active with learned patterns. Heuristic = using rule-based signals only"
                   value={paperState.model_trained ? 'Trained' : 'Heuristic'}
                   accentColor={paperState.model_trained ? 'rgb(var(--color-green))' : 'rgb(var(--color-yellow))'}
                   color={paperState.model_trained ? 'text-accent-green' : 'text-accent-yellow'}
