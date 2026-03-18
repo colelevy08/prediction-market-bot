@@ -94,13 +94,13 @@ export default function App() {
             {/* Connection indicators */}
             <div className="hidden md:flex items-center gap-3">
               {[
-                { label: 'Kalshi', ok: status?.kalshi_connected, color: 'bg-accent-green' },
-                { label: 'AI', ok: status?.anthropic_connected, color: 'bg-accent-purple' },
-                { label: `RF(${status?.model?.n_features || 0})`, ok: status?.model?.is_trained, color: 'bg-accent-cyan' },
-                status?.supabase_connected && { label: 'DB', ok: true, color: 'bg-accent-blue' },
+                { label: 'Kalshi', ok: status?.kalshi_connected },
+                { label: 'AI', ok: status?.anthropic_connected },
+                { label: `RF(${status?.model?.n_features || 0})`, ok: status?.model?.is_trained },
+                status?.supabase_connected && { label: 'DB', ok: true },
               ].filter(Boolean).map((item, i) => (
                 <div key={i} className="flex items-center gap-1.5">
-                  <span className={`w-1.5 h-1.5 rounded-full ${item.ok ? `${item.color} pulse-dot` : 'bg-text-muted'}`} />
+                  <span className={`w-1.5 h-1.5 rounded-full ${item.ok ? 'bg-accent-green pulse-dot' : 'bg-text-muted'}`} />
                   <span className={`text-[10px] font-medium tracking-wide ${item.ok ? 'text-text-secondary' : 'text-text-muted'}`}>
                     {item.label}
                   </span>
