@@ -1,3 +1,56 @@
+/**
+ * Testing Component — Backtester and Shadow Trading
+ *
+ * Provides two modes for evaluating the prediction market bot's strategy
+ * without risking real money, toggled via top-level tabs.
+ *
+ * Mode 1: Backtester
+ *   - Configuration panel: initial balance, entry threshold, exit threshold,
+ *     minimum confidence, and max markets.
+ *   - "Run Backtest" executes a single backtest with the configured parameters.
+ *   - "Parameter Sweep" runs multiple backtests across parameter combinations,
+ *     ranked by Sharpe ratio.
+ *   - Results display: win rate, Sharpe ratio, P&L, profit factor, CV accuracy,
+ *     OOB score, max drawdown, train/test split, signals generated/filtered,
+ *     average edge, and average log return.
+ *   - Equity Curve line chart for the backtest run.
+ *   - Feature Importance horizontal bar chart (top 15 features).
+ *   - Trade Log table: ticker, side, entry/exit prices, P&L, and edge per trade.
+ *   - Sweep results table: ranked parameter combos with Sharpe, win%, P&L,
+ *     trade count, and profit factor.
+ *
+ * Mode 2: Shadow Trading
+ *   - Simulates live trading using real market data but with virtual funds.
+ *   - Add Demo Funds: preset buttons ($100-$10,000) or custom amount input.
+ *   - Controls: Reset All (re-initialize), Train Model (incremental training),
+ *     Scan Once (single market scan), Auto Scan (60-second polling interval).
+ *   - State cards: balance, open positions count, total trades (W/L), Sharpe,
+ *     P&L, and model status (trained vs heuristic with sample count).
+ *   - Open Shadow Positions list: ticker, side, contracts, entry price,
+ *     model probability.
+ *   - Shadow Equity line chart over trade sequence.
+ *   - Shadow Trade Log table: ticker, side, entry/exit, P&L.
+ *   - Scan Log: reverse-chronological feed of scan results showing entries,
+ *     exits, open positions, and balance after each scan.
+ *
+ * API endpoints called:
+ *   - api.runBacktest(config)        — run a single backtest
+ *   - api.runSweep({ max_markets })  — run parameter sweep
+ *   - api.getPaperState()            — fetch current shadow trading state
+ *   - api.configurePaper(balance)    — reset/initialize shadow trading
+ *   - api.addPaperFunds(amountCents) — add virtual funds to shadow balance
+ *   - api.paperTrain()               — train/retrain the ML model on paper data
+ *   - api.paperScan()                — execute one market scan cycle
+ *
+ * Data displayed:
+ *   - Backtest results: win_rate, sharpe_ratio, total_pnl_cents, profit_factor,
+ *     cv_accuracy, oob_score, max_drawdown_cents, equity_curve, trades,
+ *     feature_importance, train/test sample counts, signals generated/filtered
+ *   - Sweep results[]: config (entry_threshold, min_confidence), sharpe_ratio,
+ *     win_rate, total_pnl_cents, total_trades, profit_factor
+ *   - Paper state: balance_cents, open_positions, metrics, model_trained,
+ *     total_scans, training_samples_count, equity_curve, trades
+ */
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, Cell } from 'recharts';
@@ -109,8 +162,8 @@ export default function Testing() {
     setError(null);
     try {
       const result = await api.paperTrain();
-      setPaperState(prev => prev ? { ...prev, model_trained: true } : prev);
-      alert(`Trained on ${result.samples} samples. CV: ${(result.cv_accuracy * 100).toFixed(1)}%`);
+      setPaperState(prev => prev ? { ...prev, model_trained: true, training_samples_count: result.total_cumulative_samples } : prev);
+      alert(`Trained on ${result.total_cumulative_samples || result.samples} cumulative samples (${result.new_samples_added ?? '?'} new). CV: ${(result.cv_accuracy * 100).toFixed(1)}%`);
     } catch (e) { setError(`Training failed: ${e.message}`); }
     finally { setLoading(false); }
   };
@@ -469,7 +522,7 @@ export default function Testing() {
                 <StatCard label="Model"
                   value={paperState.model_trained ? 'Trained' : 'Heuristic'}
                   color={paperState.model_trained ? 'text-accent-green' : 'text-accent-yellow'}
-                  sub={`${paperState.total_scans} scans`} />
+                  sub={`${paperState.total_scans} scans${paperState.training_samples_count ? ` · ${paperState.training_samples_count} samples` : ''}`} />
               </div>
 
               {paperState.open_positions?.length > 0 && (

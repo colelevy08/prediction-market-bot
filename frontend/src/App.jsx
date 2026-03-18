@@ -1,3 +1,24 @@
+/**
+ * App.jsx - Root application component for the PredictionBot frontend.
+ *
+ * Renders the main layout including a sticky header with branding, connection
+ * status indicators (Kalshi, AI, Random Forest model), a theme toggle
+ * (dark/light), and a tabbed navigation system with responsive mobile support.
+ *
+ * Key features:
+ *  - Tab-based routing across Dashboard, Signals, Portfolio, Markets,
+ *    Performance, Testing, and Settings views.
+ *  - Polls the backend `/api/status` endpoint every 30 seconds to keep
+ *    connection and environment state up to date.
+ *  - Triggers market scans via the API and surfaces results/errors in
+ *    dismissible banners.
+ *  - Persists the selected color theme to localStorage.
+ *
+ * Connects to:
+ *  - ./api.js for all backend communication.
+ *  - Child page components in ./components/ (Dashboard, Signals, Portfolio,
+ *    Markets, Performance, Testing, Settings).
+ */
 import { useState, useEffect, useCallback } from 'react';
 import { api } from './api';
 import Dashboard from './components/Dashboard';
@@ -91,17 +112,25 @@ export default function App() {
             {/* Connection indicators - hidden on mobile */}
             <div className="hidden md:flex items-center gap-4 text-xs text-text-secondary">
               <span className="flex items-center gap-1.5">
-                <span className={`w-1.5 h-1.5 rounded-full ${status?.kalshi_connected ? 'bg-accent-green pulse-dot' : 'bg-accent-red'}`} />
-                Kalshi
+                <span className={`w-2 h-2 rounded-full ${status?.kalshi_connected ? 'bg-accent-green pulse-dot glow-pulse' : 'bg-accent-red'}`} />
+                <span className={status?.kalshi_connected ? 'text-accent-green' : 'text-accent-red'}>Kalshi</span>
               </span>
               <span className="flex items-center gap-1.5">
-                <span className={`w-1.5 h-1.5 rounded-full ${status?.anthropic_connected ? 'bg-accent-green pulse-dot' : 'bg-text-muted'}`} />
-                AI
+                <span className={`w-2 h-2 rounded-full ${status?.anthropic_connected ? 'bg-accent-purple pulse-dot' : 'bg-text-muted'}`} />
+                <span className={status?.anthropic_connected ? 'text-accent-purple' : 'text-text-muted'}>AI</span>
               </span>
               <span className="flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-accent-green pulse-dot" />
-                RF ({status?.model?.n_features || 0})
+                <span className={`w-2 h-2 rounded-full ${status?.model?.is_trained ? 'bg-accent-cyan pulse-dot' : 'bg-accent-yellow'}`} />
+                <span className={status?.model?.is_trained ? 'text-accent-cyan' : 'text-accent-yellow'}>
+                  RF ({status?.model?.n_features || 0})
+                </span>
               </span>
+              {status?.supabase_connected && (
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-accent-blue pulse-dot" />
+                  <span className="text-accent-blue">DB</span>
+                </span>
+              )}
             </div>
 
             {/* Theme toggle */}

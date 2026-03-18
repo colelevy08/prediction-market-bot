@@ -1,14 +1,60 @@
+/**
+ * Performance Dashboard Component
+ *
+ * Displays comprehensive trading performance analytics for resolved trades.
+ *
+ * Key sections:
+ *   - Metric cards (top grid): Win rate, Sharpe ratio, total P&L, profit factor,
+ *     average MAE (max adverse excursion), average MFE (max favorable excursion),
+ *     average log return, average edge, max drawdown, and best/worst trade.
+ *   - Equity Curve chart: Line chart showing cumulative equity over trade sequence.
+ *   - P&L Per Trade chart: Bar chart of individual trade profit/loss, color-coded
+ *     green (win) or red (loss).
+ *   - P&L by Category: Breakdown of performance grouped by market category,
+ *     showing total P&L, trade count, and win rate per category.
+ *   - Trade History table: Full log of all resolved trades with ticker, side,
+ *     category, entry/exit prices, log return, P&L, MAE, MFE, win/loss result,
+ *     and editable notes. Includes CSV export.
+ *   - Sharpe Ratio Guide: Visual reference for interpreting Sharpe values
+ *     (< 1 bad, 1-2 good, > 2 excellent).
+ *
+ * API endpoints called:
+ *   - api.getPerformance()          — fetches metrics, trades, and equity curve
+ *   - api.getPerformanceByCategory() — fetches per-category performance breakdown
+ *   - api.updateTradeNotes(idx, text) — saves user notes on individual trades
+ *   - api.exportTradesCsv('paper')  — triggers CSV download of trade history
+ *
+ * Data displayed:
+ *   - metrics: win_rate, sharpe_ratio, total_pnl_cents, profit_factor, avg_mae,
+ *     avg_mfe, avg_log_return, avg_edge, max_drawdown_cents, best/worst_trade_pnl
+ *   - trades[]: ticker, side, category, entry_price, exit_price, log_return,
+ *     pnl_cents, mae, mfe, won, notes
+ *   - equity_curve[]: trade_num, equity_cents
+ *   - categories{}: keyed by category name, each with total_pnl_cents,
+ *     total_trades, win_rate
+ */
 import { useState, useEffect } from 'react';
 import { api } from '../api';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, Cell } from 'recharts';
 
-function MetricCard({ label, value, sub, color = 'text-white', formula }) {
+function MetricCard({ label, value, sub, color = 'text-white', formula, borderColor = '', progress = null, icon = null }) {
   return (
-    <div className="bg-card border border-border rounded-lg p-4 card-hover">
-      <div className="text-[10px] uppercase tracking-widest text-text-secondary mb-2">{label}</div>
+    <div className={`bg-card border border-border rounded-lg p-4 card-hover ${borderColor}`}>
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-[10px] uppercase tracking-widest text-text-secondary">{label}</div>
+        {icon && <span className="text-sm opacity-40">{icon}</span>}
+      </div>
       <div className={`text-xl font-bold font-mono ${color}`}>{value}</div>
       {sub && <div className="text-[10px] text-text-secondary mt-1">{sub}</div>}
       {formula && <div className="text-[10px] font-mono text-text-muted mt-1">{formula}</div>}
+      {progress !== null && (
+        <div className="progress-bar">
+          <div className="fill" style={{
+            width: `${Math.min(Math.max(progress, 0), 100)}%`,
+            background: progress >= 60 ? '#00ff87' : progress >= 50 ? '#ffb800' : '#ff3b3b'
+          }} />
+        </div>
+      )}
     </div>
   );
 }
@@ -49,25 +95,55 @@ export default function Performance() {
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <MetricCard label="Win Rate" value={noData ? '--' : `${(metrics.win_rate * 100).toFixed(1)}%`}
           sub={noData ? null : `${metrics.wins}W / ${metrics.losses}L`}
-          color={metrics.win_rate >= 0.6 ? 'text-accent-green' : metrics.win_rate >= 0.5 ? 'text-accent-yellow' : 'text-accent-red'} />
+          color={metrics.win_rate >= 0.6 ? 'text-accent-green' : metrics.win_rate >= 0.5 ? 'text-accent-yellow' : 'text-accent-red'}
+          borderColor={metrics.win_rate >= 0.6 ? 'border-l-green' : metrics.win_rate >= 0.5 ? 'border-l-yellow' : 'border-l-red'}
+          progress={noData ? null : metrics.win_rate * 100}
+          icon="🎯" />
         <MetricCard label="Sharpe Ratio" value={noData ? '--' : metrics.sharpe_ratio}
-          sub={metrics.sharpe_label} formula="SR = (Rp - Rf) / σ"
-          color={metrics.sharpe_ratio >= 2 ? 'text-accent-green' : metrics.sharpe_ratio >= 1 ? 'text-accent-yellow' : 'text-accent-red'} />
+          sub={metrics.sharpe_label ? (
+            <span className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase ${
+              metrics.sharpe_ratio >= 2 ? 'bg-accent-green/10 text-accent-green' :
+              metrics.sharpe_ratio >= 1 ? 'bg-accent-yellow/10 text-accent-yellow' :
+              'bg-accent-red/10 text-accent-red'
+            }`}>{metrics.sharpe_label}</span>
+          ) : null}
+          formula="SR = (Rp - Rf) / σ"
+          color={metrics.sharpe_ratio >= 2 ? 'text-accent-green' : metrics.sharpe_ratio >= 1 ? 'text-accent-yellow' : 'text-accent-red'}
+          borderColor={metrics.sharpe_ratio >= 2 ? 'border-l-green' : metrics.sharpe_ratio >= 1 ? 'border-l-yellow' : 'border-l-red'}
+          icon="📐" />
         <MetricCard label="Total P&L" value={noData ? '--' : `$${(metrics.total_pnl_cents / 100).toFixed(2)}`}
-          color={metrics.total_pnl_cents > 0 ? 'text-accent-green' : 'text-accent-red'} />
+          color={metrics.total_pnl_cents > 0 ? 'text-accent-green' : metrics.total_pnl_cents < 0 ? 'text-accent-red' : 'text-white'}
+          borderColor={metrics.total_pnl_cents > 0 ? 'border-l-green' : metrics.total_pnl_cents < 0 ? 'border-l-red' : 'border-l-white'}
+          icon={metrics.total_pnl_cents > 0 ? '📈' : '📉'} />
         <MetricCard label="Profit Factor" value={noData ? '--' : metrics.profit_factor}
-          sub="Gross profit / loss" color={metrics.profit_factor >= 1.5 ? 'text-accent-green' : 'text-white'} />
+          sub="Gross profit / loss"
+          color={metrics.profit_factor >= 2 ? 'text-accent-green' : metrics.profit_factor >= 1.5 ? 'text-accent-cyan' : metrics.profit_factor >= 1 ? 'text-accent-yellow' : 'text-accent-red'}
+          borderColor={metrics.profit_factor >= 1.5 ? 'border-l-green' : metrics.profit_factor >= 1 ? 'border-l-yellow' : 'border-l-red'}
+          icon="⚖️" />
         <MetricCard label="Avg MAE" value={noData ? '--' : `${(metrics.avg_mae * 100).toFixed(1)}%`}
-          sub="Max adverse excursion" />
+          sub="Max adverse excursion" color="text-accent-red" borderColor="border-l-red" icon="🔻" />
         <MetricCard label="Avg MFE" value={noData ? '--' : `${(metrics.avg_mfe * 100).toFixed(1)}%`}
-          sub="Max favorable excursion" />
+          sub="Max favorable excursion" color="text-accent-green" borderColor="border-l-green" icon="🔺" />
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <MetricCard label="Avg Log Return" value={noData ? '--' : metrics.avg_log_return?.toFixed(4)} formula="ln(P1/P0)" />
-        <MetricCard label="Avg Edge" value={noData ? '--' : `${(metrics.avg_edge * 100).toFixed(1)}%`} sub="Model - market" />
-        <MetricCard label="Max Drawdown" value={noData ? '--' : `$${(metrics.max_drawdown_cents / 100).toFixed(2)}`} color="text-accent-red" />
-        <MetricCard label="Best / Worst" value={noData ? '--' : `$${(metrics.best_trade_pnl / 100).toFixed(2)} / $${(metrics.worst_trade_pnl / 100).toFixed(2)}`} />
+        <MetricCard label="Avg Log Return" value={noData ? '--' : metrics.avg_log_return?.toFixed(4)} formula="ln(P1/P0)"
+          color={metrics.avg_log_return > 0 ? 'text-accent-green' : metrics.avg_log_return < 0 ? 'text-accent-red' : 'text-white'}
+          borderColor="border-l-blue" icon="📊" />
+        <MetricCard label="Avg Edge" value={noData ? '--' : `${(metrics.avg_edge * 100).toFixed(1)}%`} sub="Model - market"
+          color={metrics.avg_edge > 0.05 ? 'text-accent-green' : metrics.avg_edge > 0 ? 'text-accent-yellow' : 'text-accent-red'}
+          borderColor="border-l-purple" icon="🔮" />
+        <MetricCard label="Max Drawdown" value={noData ? '--' : `$${(metrics.max_drawdown_cents / 100).toFixed(2)}`}
+          color="text-accent-red" borderColor="border-l-red" icon="⚠️" />
+        <MetricCard label="Best / Worst"
+          value={noData ? '--' : (
+            <span>
+              <span className="text-accent-green">${(metrics.best_trade_pnl / 100).toFixed(2)}</span>
+              <span className="text-text-muted mx-1">/</span>
+              <span className="text-accent-red">${(metrics.worst_trade_pnl / 100).toFixed(2)}</span>
+            </span>
+          )}
+          borderColor="border-l-cyan" icon="↕️" />
       </div>
 
       {noData ? (
@@ -113,13 +189,22 @@ export default function Performance() {
               <h3 className="text-[10px] uppercase tracking-widest text-text-secondary mb-4">P&L by Category</h3>
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                 {Object.entries(categoryData).map(([cat, m]) => (
-                  <div key={cat} className="bg-surface border border-border rounded-lg p-3">
+                  <div key={cat} className={`bg-surface border border-border rounded-lg p-3 ${m.total_pnl_cents >= 0 ? 'border-l-green' : 'border-l-red'}`}>
                     <div className="text-[10px] uppercase tracking-widest text-text-muted mb-1">{cat}</div>
                     <div className={`text-lg font-bold font-mono ${m.total_pnl_cents >= 0 ? 'text-accent-green' : 'text-accent-red'}`}>
                       ${(m.total_pnl_cents / 100).toFixed(2)}
                     </div>
                     <div className="text-[10px] text-text-secondary mt-1">
-                      {m.total_trades} trades · {(m.win_rate * 100).toFixed(0)}% WR
+                      {m.total_trades} trades ·{' '}
+                      <span className={m.win_rate >= 0.6 ? 'text-accent-green' : m.win_rate >= 0.5 ? 'text-accent-yellow' : 'text-accent-red'}>
+                        {(m.win_rate * 100).toFixed(0)}% WR
+                      </span>
+                    </div>
+                    <div className="progress-bar">
+                      <div className="fill" style={{
+                        width: `${m.win_rate * 100}%`,
+                        background: m.win_rate >= 0.6 ? '#00ff87' : m.win_rate >= 0.5 ? '#ffb800' : '#ff3b3b'
+                      }} />
                     </div>
                   </div>
                 ))}
@@ -155,21 +240,29 @@ export default function Performance() {
                 </thead>
                 <tbody>
                   {trades.map((t, i) => (
-                    <tr key={i} className="border-b border-border/50 hover:bg-surface/50">
+                    <tr key={i} className={`border-b border-border/50 ${t.won ? 'row-win' : 'row-loss'}`}>
                       <td className="px-4 py-2 text-text-secondary font-mono">{i + 1}</td>
                       <td className="px-4 py-2 font-mono text-white">{t.ticker}</td>
-                      <td className="px-4 py-2 text-center font-mono">{t.side?.toUpperCase()}</td>
+                      <td className="px-4 py-2 text-center">
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold uppercase ${
+                          t.side === 'yes' ? 'bg-accent-green/10 text-accent-green' : 'bg-accent-red/10 text-accent-red'
+                        }`}>{t.side?.toUpperCase()}</span>
+                      </td>
                       <td className="px-4 py-2 text-text-muted text-[10px]">{t.category || '--'}</td>
-                      <td className="px-4 py-2 text-right font-mono">{(t.entry_price * 100).toFixed(0)}c</td>
-                      <td className="px-4 py-2 text-right font-mono">{(t.exit_price * 100).toFixed(0)}c</td>
-                      <td className="px-4 py-2 text-right font-mono">{t.log_return?.toFixed(4)}</td>
+                      <td className="px-4 py-2 text-right font-mono">{t.entry_price != null ? (t.entry_price * 100).toFixed(0) + 'c' : '--'}</td>
+                      <td className="px-4 py-2 text-right font-mono">{t.exit_price != null ? (t.exit_price * 100).toFixed(0) + 'c' : '--'}</td>
                       <td className="px-4 py-2 text-right font-mono">
-                        <span className={t.pnl_cents >= 0 ? 'text-accent-green' : 'text-accent-red'}>
-                          ${(t.pnl_cents / 100).toFixed(2)}
+                        <span className={t.log_return > 0 ? 'text-accent-green' : t.log_return < 0 ? 'text-accent-red' : ''}>
+                          {t.log_return?.toFixed(4) ?? '--'}
                         </span>
                       </td>
-                      <td className="px-4 py-2 text-right font-mono text-accent-red">{(t.mae * 100).toFixed(1)}%</td>
-                      <td className="px-4 py-2 text-right font-mono text-accent-green">{(t.mfe * 100).toFixed(1)}%</td>
+                      <td className="px-4 py-2 text-right font-mono">
+                        <span className={(t.pnl_cents ?? 0) >= 0 ? 'text-accent-green' : 'text-accent-red'}>
+                          ${((t.pnl_cents ?? 0) / 100).toFixed(2)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 text-right font-mono text-accent-red">{t.mae != null ? (t.mae * 100).toFixed(1) + '%' : '--'}</td>
+                      <td className="px-4 py-2 text-right font-mono text-accent-green">{t.mfe != null ? (t.mfe * 100).toFixed(1) + '%' : '--'}</td>
                       <td className="px-4 py-2 text-center">
                         <span className={`text-[10px] px-2 py-0.5 rounded font-semibold uppercase ${
                           t.won ? 'bg-accent-green/10 text-accent-green' : 'bg-accent-red/10 text-accent-red'

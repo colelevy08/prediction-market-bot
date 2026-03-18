@@ -1,3 +1,35 @@
+/**
+ * api.js - Centralized API client for the PredictionBot frontend.
+ *
+ * Provides a single `api` export containing named methods for every backend
+ * endpoint. All requests go through a shared `request()` helper that prepends
+ * the base URL, sets JSON headers, and normalizes error handling.
+ *
+ * Key feature groups:
+ *  - Status & config: getStatus, updateConfig.
+ *  - Market data: getEvents, getMarket, getSignals, getArbitrage.
+ *  - Portfolio & orders: getPortfolio, getPositions, getOrders, placeTrade,
+ *    cancelOrder.
+ *  - Scanning & automation: runScan, toggleAutoScan, toggleAutoTrade,
+ *    getAutoScanStatus.
+ *  - Paper trading: getPaperState, configurePaper, addPaperFunds, paperScan,
+ *    paperTrain.
+ *  - Backtesting: runBacktest, runSweep.
+ *  - Performance & analytics: getPerformance, getFeatureImportance,
+ *    getPerformanceByCategory, getPortfolioHeatmap.
+ *  - Trade logs & notes: getShadowTradeLog, getLiveTradeLog,
+ *    updateTradeNotes, exportTradesCsv.
+ *  - Risk & retraining: resetDailyPnl, getRetrainSchedule,
+ *    updateRetrainSchedule, retrainNow.
+ *  - Notifications & webhooks: testNotifications, getNotificationConfig,
+ *    triggerWebhook.
+ *
+ * Connects to:
+ *  - The FastAPI backend at bot.server (default same-origin, overridable via
+ *    the VITE_API_URL environment variable).
+ *  - Consumed by App.jsx and individual page components throughout the
+ *    frontend.
+ */
 const API = (import.meta.env.VITE_API_URL || '') + '/api';
 
 async function request(path, options = {}) {
@@ -107,6 +139,13 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ notes }),
     }),
+
+  // Trade Logs (separate shadow vs live)
+  getShadowTradeLog: (limit = 200) => request(`/trades/shadow?limit=${limit}`),
+  getLiveTradeLog: (limit = 200) => request(`/trades/live?limit=${limit}`),
+
+  // Risk Management
+  resetDailyPnl: () => request('/risk/reset-daily', { method: 'POST' }),
 
   // Retrain Schedule
   getRetrainSchedule: () => request('/retrain/schedule'),

@@ -1,0 +1,28 @@
+# ============================================================================
+# Railway Deployment Configuration
+# ============================================================================
+# The FastAPI backend deploys to Railway.
+# Railway auto-detects Python via pyproject.toml/requirements.txt.
+# The Procfile defines the start command: uvicorn bot.server:app
+#
+# Environment variables must be set in the Railway dashboard:
+#   - KALSHI_API_KEY_ID
+#   - KALSHI_PRIVATE_KEY (raw PEM content, not file path)
+#   - KALSHI_USE_DEMO=true
+#   - ANTHROPIC_API_KEY
+#   - SUPABASE_URL
+#   - SUPABASE_KEY
+#   - SLACK_WEBHOOK_URL (optional)
+#   - DISCORD_WEBHOOK_URL (optional)
+#   - WEBHOOK_SECRET (optional)
+# ============================================================================
+
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "uvicorn bot.server:app --host 0.0.0.0 --port ${PORT:-8000}"
+healthcheckPath = "/api/status"
+healthcheckTimeout = 30
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3

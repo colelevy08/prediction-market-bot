@@ -1,9 +1,24 @@
-"""DraftKings Predictions market data scraper.
+"""
+DraftKings Predictions market data scraper for cross-platform arbitrage.
 
 DraftKings does not offer an official public trading API, so this client
 scrapes publicly available market data for cross-platform analysis and
 arbitrage detection. Actual order execution on DraftKings must be done
 manually through their app.
+
+This client attempts to fetch data from several DraftKings endpoints:
+  - /sites/US-DK/sports/v1/sports: Lists available sport categories.
+  - /lobby/getcontests: Lists available contests/markets.
+  - /draftgroups/v1: Fetches draft group data used to populate DraftKingsMarket objects.
+
+All endpoints are unofficial and may change without notice. The client uses a
+browser-like User-Agent header to avoid being blocked by DraftKings' servers.
+All API calls are wrapped in try/except to gracefully handle failures.
+
+Connects to: DraftKings unofficial REST endpoints (api.draftkings.com,
+sportsbook-nash.draftkings.com).
+Used by: bot.server (arbitrage scan), bot.main (--arbitrage CLI flag),
+bot.arbitrage (detect_arbitrage function).
 """
 
 from __future__ import annotations
@@ -21,9 +36,14 @@ DK_API_BASE = "https://api.draftkings.com"
 
 
 class DraftKingsClient:
-    """Scrapes DraftKings Predictions market data for analysis."""
+    """Scrapes DraftKings Predictions market data for cross-platform analysis.
+
+    All methods are best-effort and return empty lists on failure. DraftKings does
+    not have a stable public API, so endpoints may break without notice.
+    """
 
     def __init__(self):
+        """Initialize with a browser-like HTTP client to avoid being blocked."""
         self._client = httpx.Client(
             timeout=30,
             headers={
@@ -33,7 +53,7 @@ class DraftKingsClient:
         )
 
     def get_available_sports(self) -> list[dict[str, Any]]:
-        """List available sport categories."""
+        """List available sport categories from DraftKings. Returns empty list on failure."""
         try:
             resp = self._client.get(f"{DK_API_BASE}/sites/US-DK/sports/v1/sports", params={"format": "json"})
             resp.raise_for_status()
@@ -55,11 +75,17 @@ class DraftKingsClient:
             return []
 
     def get_prediction_markets(self, category: str = "all") -> list[DraftKingsMarket]:
-        """
-        Fetch DraftKings Predictions markets.
+        """Fetch DraftKings Predictions markets from the draft groups endpoint.
 
-        Since DraftKings Predictions doesn't have a stable public API,
-        this attempts to scrape available data. Results may be incomplete.
+        Since DraftKings Predictions doesn't have a stable public API, this attempts
+        to scrape available data from the /draftgroups/v1 endpoint. Results may be
+        incomplete or empty if the endpoint structure changes.
+
+        Args:
+            category: Category filter (currently unused — fetches all).
+
+        Returns:
+            List of DraftKingsMarket objects (may be empty on API failures).
         """
         markets = []
 
@@ -84,7 +110,7 @@ class DraftKingsClient:
         return markets
 
     def get_event_odds(self, event_id: str) -> dict[str, Any]:
-        """Fetch odds/prices for a specific event (best-effort)."""
+        """Fetch odds/prices for a specific DraftKings event (best-effort). Returns {} on failure."""
         try:
             resp = self._client.get(
                 f"{DK_API_BASE}/contests/v1/contests/{event_id}",

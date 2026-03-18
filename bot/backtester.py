@@ -1,10 +1,41 @@
 """
-Backtester: test the strategy on historical Kalshi data.
+Historical backtester, cumulative training data store, and paper trading simulator.
 
-Fetches settled markets, replays the strategy, and reports
-full performance metrics including Sharpe Ratio, win rate, MAE/MFE.
+This module provides three major components for testing and running the strategy:
 
-Also provides a paper trading simulator for live testing without real money.
+1. TrainingDataStore:
+   - Persists training samples (106-feature vectors + binary outcomes) to JSON + Supabase.
+   - Samples are deduplicated by market ticker so each settled market is stored once.
+   - Every training run builds cumulatively on all previously seen data rather than
+     discarding old samples, so the model improves monotonically with more data.
+   - Primary storage: local JSON file (data/training_samples.json).
+   - Fallback/sync: Supabase table 'training_samples' (batch upsert, 500-row chunks).
+
+2. HistoricalDataFetcher:
+   - Fetches settled (resolved) markets from Kalshi via paginated API calls.
+   - Reconstructs realistic pre-settlement prices from trade history (last 50 trades)
+     so the model trains on actual market conditions, not post-settlement 0/100 prices.
+   - Falls back to last_price or previous_price when trade history is unavailable.
+
+3. Backtester:
+   - Runs the full RF+GB ensemble strategy on historical data.
+   - Splits data into train/test sets (default 60/40), trains the model, then replays
+     the strategy on the test set using the guide's entry/exit/confidence rules.
+   - Reports: Sharpe Ratio, win rate, profit factor, max drawdown, MAE/MFE, equity curve.
+   - parameter_sweep() tests grid of (entry_threshold x confidence_level) combinations,
+     sorted by Sharpe Ratio to find optimal settings without overfitting.
+
+4. PaperTrader:
+   - Live paper trading simulator that processes real market data without placing orders.
+   - Runs the full signal generation pipeline: snapshot recording, entry signals, exit checks.
+   - Tracks positions (PaperPosition dataclass) with MAE/MFE during the trade's lifetime.
+   - Persists state to both JSON file and Supabase for crash recovery.
+   - Integrates TrainingDataStore for cumulative model retraining.
+
+Connects to: KalshiClient (market data), RFSignalGenerator (signals), PerformanceTracker
+(metrics), Database (Supabase persistence), config (trading parameters).
+
+Used by: bot.server (REST endpoints for /api/backtest, /api/paper/*).
 """
 
 from __future__ import annotations
@@ -28,6 +59,133 @@ from bot.performance import PerformanceTracker, TradeRecord
 
 # Default persistence directory
 DATA_DIR = Path(__file__).parent.parent / "data"
+
+import logging
+logger = logging.getLogger("predictionbot")
+
+
+# ── Cumulative Training Data Store ───────────────────────────────────────────
+
+class TrainingDataStore:
+    """
+    Persists training samples (features + outcomes) so each training run
+    builds on all previously seen data rather than discarding it.
+
+    Samples are deduplicated by ticker (each settled market has a unique ticker).
+    Stored as a JSON file locally and optionally synced to Supabase.
+    """
+
+    def __init__(self, path: Path | None = None, db=None):
+        self.path = path or DATA_DIR / "training_samples.json"
+        self.db = db
+        self.samples: dict[str, dict] = {}  # keyed by ticker for dedup
+        self._load()
+
+    def _load(self):
+        """Load existing samples from disk (primary) or DB (fallback)."""
+        # Try local JSON first
+        if self.path.exists():
+            try:
+                data = json.loads(self.path.read_text())
+                for s in data.get("samples", []):
+                    ticker = s.get("ticker", "")
+                    if ticker:
+                        self.samples[ticker] = s
+                logger.info(f"TrainingDataStore: loaded {len(self.samples)} samples from disk")
+                return
+            except (json.JSONDecodeError, KeyError) as e:
+                logger.warning(f"TrainingDataStore: failed to load from disk: {e}")
+
+        # Fallback to DB
+        if self.db and self.db.is_connected:
+            try:
+                rows = self.db.get_training_samples()
+                for s in rows:
+                    ticker = s.get("ticker", "")
+                    if ticker:
+                        self.samples[ticker] = {
+                            "ticker": ticker,
+                            "features": s.get("features", {}),
+                            "outcome": s.get("outcome", 0),
+                            "fetched_at": s.get("fetched_at", ""),
+                        }
+                if self.samples:
+                    logger.info(f"TrainingDataStore: loaded {len(self.samples)} samples from DB")
+                    self._save_to_disk()  # Cache locally
+            except Exception as e:
+                logger.warning(f"TrainingDataStore: failed to load from DB: {e}")
+
+    def add_samples(self, settled_data: list[dict]) -> int:
+        """
+        Merge new training samples into the store, deduplicating by ticker.
+        Returns the number of NEW samples added.
+        """
+        new_count = 0
+        now = datetime.now(timezone.utc).isoformat()
+
+        for item in settled_data:
+            market = item.get("market")
+            ticker = market.ticker if hasattr(market, "ticker") else item.get("ticker", "")
+            if not ticker or ticker in self.samples:
+                continue
+
+            self.samples[ticker] = {
+                "ticker": ticker,
+                "features": item["features"],
+                "outcome": item["outcome"],
+                "fetched_at": now,
+            }
+            new_count += 1
+
+        if new_count > 0:
+            self._save_to_disk()
+            self._save_to_db(settled_data[-new_count:] if new_count <= len(settled_data) else settled_data)
+            logger.info(f"TrainingDataStore: added {new_count} new samples (total: {len(self.samples)})")
+
+        return new_count
+
+    def get_all_samples(self) -> list[dict]:
+        """Return all stored samples as a list of {features, outcome} dicts."""
+        return list(self.samples.values())
+
+    def get_features_and_outcomes(self) -> tuple[list[dict], list[int]]:
+        """Return features list and outcomes list ready for model training."""
+        features = []
+        outcomes = []
+        for s in self.samples.values():
+            features.append(s["features"])
+            outcomes.append(s["outcome"])
+        return features, outcomes
+
+    @property
+    def count(self) -> int:
+        return len(self.samples)
+
+    def _save_to_disk(self):
+        """Persist all samples to JSON file."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "total_count": len(self.samples),
+            "saved_at": datetime.now(timezone.utc).isoformat(),
+            "samples": list(self.samples.values()),
+        }
+        self.path.write_text(json.dumps(data))
+
+    def _save_to_db(self, new_samples: list[dict]):
+        """Batch-insert new samples to Supabase (best-effort)."""
+        if not self.db or not self.db.is_connected:
+            return
+        try:
+            self.db.insert_training_samples([
+                {
+                    "ticker": s.get("ticker", s.get("market", {}).ticker if hasattr(s.get("market", {}), "ticker") else ""),
+                    "features": s.get("features", {}),
+                    "outcome": s.get("outcome", 0),
+                }
+                for s in new_samples
+            ])
+        except Exception as e:
+            logger.warning(f"TrainingDataStore: DB save failed: {e}")
 
 
 # ── Historical Data Fetcher ──────────────────────────────────────────────────
@@ -166,20 +324,24 @@ class HistoricalDataFetcher:
 
 @dataclass
 class BacktestConfig:
-    """Configuration for a backtest run."""
-    initial_balance_cents: int = 100_00  # $100
-    max_bet_cents: int = 25_00           # $25
-    entry_threshold: float = 0.5         # market <= model * threshold
-    exit_threshold: float = 0.9          # market >= model * threshold
-    min_confidence: float = 0.70         # 70% minimum
-    min_volume: int = 50
-    max_positions: int = 10
-    train_ratio: float = 0.6            # 60% train, 40% test
+    """Configuration parameters for a single backtest run.
+
+    These mirror the guide's recommended settings and can be swept via
+    Backtester.parameter_sweep() to find optimal values.
+    """
+    initial_balance_cents: int = 100_00  # Starting paper balance ($100)
+    max_bet_cents: int = 25_00           # Maximum bet per trade ($25)
+    entry_threshold: float = 0.5         # Entry rule: market_price <= model_prob * threshold
+    exit_threshold: float = 0.9          # Exit rule: market_price >= model_prob * threshold
+    min_confidence: float = 0.70         # Minimum model confidence to enter (70%)
+    min_volume: int = 50                 # Skip markets with < 50 contracts traded
+    max_positions: int = 10              # Max simultaneous open positions
+    train_ratio: float = 0.6            # Train/test split (60% train, 40% test)
 
 
 @dataclass
 class BacktestResult:
-    """Complete backtest results."""
+    """Complete backtest results including training metrics, trading metrics, and details."""
     config: dict = field(default_factory=dict)
     # Training metrics
     train_samples: int = 0
@@ -218,19 +380,38 @@ class Backtester:
     """
 
     def __init__(self, kalshi: KalshiClient | None = None):
+        """Initialize the backtester with an optional Kalshi client for data fetching.
+
+        Args:
+            kalshi: If provided, used to fetch settled markets. If None, settled_data
+                    must be passed directly to run().
+        """
         self.kalshi = kalshi
-        self.model = PredictionModel(n_estimators=500)
-        self.tracker = PerformanceTracker()
+        self.model = PredictionModel(n_estimators=500)  # Fresh ensemble for each backtest
+        self.tracker = PerformanceTracker()               # Tracks per-trade metrics
 
     def run(
         self,
         settled_data: list[dict] | None = None,
         cfg: BacktestConfig | None = None,
     ) -> BacktestResult:
-        """
-        Run a full backtest.
+        """Run a full backtest on historical settled market data.
 
-        Pass settled_data directly, or it will fetch from Kalshi.
+        Steps:
+          1. Fetch or receive settled market data with features and outcomes.
+          2. Shuffle deterministically (seed=42) and split into train/test sets.
+          3. Train the RF+GB ensemble on the training set.
+          4. Replay the strategy on the test set: apply entry rules, simulate
+             resolution, compute P&L, track MAE/MFE.
+          5. Compile all metrics into a BacktestResult.
+
+        Args:
+            settled_data: Pre-fetched settled market data. If None, fetches from Kalshi.
+            cfg: Backtest configuration. If None, uses defaults.
+
+        Returns:
+            BacktestResult with training metrics, trading metrics, trades, equity curve,
+            and feature importance rankings.
         """
         cfg = cfg or BacktestConfig()
         result = BacktestResult(config={
@@ -253,7 +434,7 @@ class Backtester:
             result.config["error"] = f"Only {len(settled_data)} settled markets found. Need 50+."
             return result
 
-        # Shuffle and split
+        # Shuffle with fixed seed for reproducibility, then split into train/test
         random.seed(42)
         data = list(settled_data)
         random.shuffle(data)
@@ -370,9 +551,19 @@ class Backtester:
         entry_thresholds: list[float] | None = None,
         confidence_levels: list[float] | None = None,
     ) -> list[BacktestResult]:
-        """
-        Run backtests across multiple parameter combinations
-        to find optimal settings without overfitting.
+        """Run backtests across a grid of parameter combinations to find optimal settings.
+
+        Tests every combination of entry_threshold x min_confidence values. Each run
+        uses a fresh model to avoid state leakage between configurations. Results are
+        sorted by Sharpe Ratio (descending) — the guide's primary metric for strategy quality.
+
+        Args:
+            settled_data: Historical settled market data (shared across all runs).
+            entry_thresholds: List of entry threshold values to test (default: 0.4 to 0.6).
+            confidence_levels: List of confidence values to test (default: 0.60 to 0.80).
+
+        Returns:
+            List of BacktestResult objects sorted by Sharpe Ratio (best first).
         """
         entry_thresholds = entry_thresholds or [0.4, 0.45, 0.5, 0.55, 0.6]
         confidence_levels = confidence_levels or [0.60, 0.65, 0.70, 0.75, 0.80]
@@ -398,16 +589,21 @@ class Backtester:
 
 @dataclass
 class PaperPosition:
-    """A simulated position."""
-    ticker: str
-    side: str
-    entry_price: float
-    contracts: int
-    model_prob: float
-    entry_time: str
-    category: str = ""
-    min_price_seen: float = 1.0
-    max_price_seen: float = 0.0
+    """A simulated (paper) position with MAE/MFE tracking.
+
+    min_price_seen and max_price_seen are updated on every scan cycle
+    to track how far the price moved against/in favor of the position
+    before it was closed.
+    """
+    ticker: str                        # Kalshi market ticker
+    side: str                          # "yes" or "no"
+    entry_price: float                 # Entry price as decimal (0-1)
+    contracts: int                     # Number of simulated contracts
+    model_prob: float                  # Model's predicted probability at entry
+    entry_time: str                    # ISO timestamp of simulated entry
+    category: str = ""                 # Market category for per-category analytics
+    min_price_seen: float = 1.0        # Lowest price seen since entry (for MAE calculation)
+    max_price_seen: float = 0.0        # Highest price seen since entry (for MFE calculation)
 
 
 class PaperTrader:
@@ -419,13 +615,19 @@ class PaperTrader:
     """
 
     def __init__(self, db=None):
-        self.db = db  # Optional Database instance
-        self.balance_cents: int = 100_00  # $100 starting balance
-        self.positions: dict[str, PaperPosition] = {}
-        self.tracker = PerformanceTracker(db=db, mode="paper")
-        self.generator = RFSignalGenerator()
-        self.total_scans: int = 0
-        self.signals_seen: int = 0
+        """Initialize the paper trader with optional database persistence.
+
+        Args:
+            db: Optional Database instance for persisting state and trades to Supabase.
+        """
+        self.db = db                                       # Optional Supabase persistence
+        self.balance_cents: int = 100_00                   # Starting paper balance ($100)
+        self.positions: dict[str, PaperPosition] = {}      # Open positions keyed by ticker
+        self.tracker = PerformanceTracker(db=db, mode="paper")  # Trade recording + metrics
+        self.generator = RFSignalGenerator()               # RF+GB ensemble signal generator
+        self.training_store = TrainingDataStore(db=db)      # Cumulative training data
+        self.total_scans: int = 0                          # Number of scan cycles completed
+        self.signals_seen: int = 0                         # Total signals generated across all scans
 
     def configure(self, balance_cents: int = 100_00):
         """Set starting balance."""
@@ -438,11 +640,20 @@ class PaperTrader:
         return self.balance_cents
 
     def scan_and_trade(self, events: list[Event]) -> dict:
-        """
-        Run a full scan cycle:
-        1. Check exits on open positions
-        2. Generate new entry signals
-        3. Execute paper trades
+        """Run a full paper trading scan cycle on live market data.
+
+        Pipeline:
+          1. Check all open positions for exit conditions (target hit, expiry, settlement).
+          2. Generate new entry signals using the RF+GB ensemble.
+          3. For each signal: skip if already positioned, check position limit, verify balance,
+             simulate a fill at the ask price, and record the paper position.
+
+        Args:
+            events: List of Kalshi events with nested market data.
+
+        Returns:
+            Dict with entries (new positions), exits (closed positions), scan number,
+            open position count, balance, and total trade count.
         """
         self.total_scans += 1
 
@@ -508,7 +719,18 @@ class PaperTrader:
         }
 
     def _check_exits(self, events: list[Event]) -> list[dict]:
-        """Check and execute exits on paper positions."""
+        """Check all open paper positions for exit conditions and close those that trigger.
+
+        Exit conditions (from the guide):
+          - Target hit: current_price >= model_prob * 0.9 (90% of fair value reached).
+          - Expiry approaching: days_to_expiry <= 7 (close before expiration risk).
+          - Market settled: Kalshi resolved the market (definitive win/loss).
+
+        Also updates MAE/MFE tracking for each open position on every check.
+
+        Returns:
+            List of exit dicts with ticker, reason, entry/exit prices, and P&L.
+        """
         exits = []
         market_map = {}
         for event in events:
@@ -585,7 +807,11 @@ class PaperTrader:
         return exits
 
     def get_state(self) -> dict:
-        """Get full paper trading state."""
+        """Get the complete paper trading state for the frontend Dashboard/Testing tabs.
+
+        Returns a dict containing: balance, open positions, performance metrics,
+        equity curve, trade history, scan count, signal count, and model training state.
+        """
         metrics = self.tracker.get_metrics()
         return {
             "balance_cents": self.balance_cents,
@@ -618,19 +844,54 @@ class PaperTrader:
             "total_scans": self.total_scans,
             "signals_seen": self.signals_seen,
             "model_trained": self.generator.model.is_trained,
+            "training_samples_count": self.training_store.count,
         }
 
     def train_model(self, settled_data: list[dict]) -> dict:
-        """Train the model using historical data."""
-        features_list = [d["features"] for d in settled_data]
-        outcomes = [d["outcome"] for d in settled_data]
-        result = self.generator.model.train_on_historical(features_list, outcomes)
+        """Train the model using historical data CUMULATIVELY.
+
+        This is the key training method for the paper trader. Unlike a fresh backtest,
+        it preserves all previously seen training samples and merges new ones:
+
+          1. Add new settled market samples to TrainingDataStore (deduplicated by ticker).
+          2. Train the RF+GB ensemble on ALL accumulated samples (not just the new batch).
+          3. Log the training run to Supabase with sample counts and accuracy metrics.
+
+        This cumulative approach means the model gets better over time as more markets
+        settle, without ever losing previously learned data.
+
+        Args:
+            settled_data: List of dicts with 'market', 'features', and 'outcome' keys.
+
+        Returns:
+            Training result dict with: trained, samples, cv_accuracy, oob_score,
+            total_cumulative_samples, new_samples_added.
+        """
+        # 1. Add new samples to the cumulative store (deduped by ticker)
+        new_count = self.training_store.add_samples(settled_data)
+
+        # 2. Train on ALL accumulated samples
+        all_features, all_outcomes = self.training_store.get_features_and_outcomes()
+        total_samples = len(all_features)
+
+        logger.info(
+            f"Training on {total_samples} cumulative samples "
+            f"({new_count} new, {total_samples - new_count} existing)"
+        )
+
+        result = self.generator.model.train_on_historical(all_features, all_outcomes)
+
+        # Add cumulative info to result
+        if isinstance(result, dict):
+            result["total_cumulative_samples"] = total_samples
+            result["new_samples_added"] = new_count
+            result["samples"] = total_samples  # Override with true count
 
         # Persist training run to DB
         if self.db and self.db.is_connected and isinstance(result, dict):
             try:
                 self.db.insert_training_run(
-                    samples=len(settled_data),
+                    samples=total_samples,
                     cv_accuracy=result.get("cv_accuracy", 0),
                     oob_score=result.get("oob_score", 0),
                     n_features=result.get("n_features", 106),

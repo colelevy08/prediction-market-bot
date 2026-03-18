@@ -1,3 +1,33 @@
+/*
+ * Portfolio Component
+ *
+ * Displays a comprehensive overview of the user's prediction market portfolio,
+ * including cash balance, open positions, open orders, and a category-based
+ * portfolio heatmap.
+ *
+ * Key Sections:
+ *   - Summary Cards: Cash balance (in cents, displayed as dollars), count of
+ *     open positions, and count of open orders.
+ *   - Positions Table: Lists all open positions with ticker, market title, side
+ *     (yes/no), quantity, average entry price, current price, and unrealized P&L.
+ *   - Portfolio Heatmap: Groups positions by category, showing position count,
+ *     total invested value, and ticker badges for each category.
+ *   - Open Orders Table: Lists pending orders with order ID, ticker, side, action,
+ *     price, remaining count, and a cancel button per order.
+ *
+ * API Endpoints Called:
+ *   - api.getPortfolio()        — Fetches balance and portfolio summary.
+ *   - api.getPositions()        — Fetches all open positions.
+ *   - api.getOrders()           — Fetches all open/pending orders.
+ *   - api.getPortfolioHeatmap() — Fetches positions grouped by category.
+ *   - api.cancelOrder(orderId)  — Cancels a specific open order by ID.
+ *
+ * Data Displayed:
+ *   - balance_cents, positions (ticker, side, quantity, avg_price_cents,
+ *     current_price_cents, unrealized_pnl_cents, market_title), orders
+ *     (order_id, ticker, side, action, yes_price, remaining_count/count),
+ *     and heatmap categories with per-category position lists and entry values.
+ */
 import { useState, useEffect } from 'react';
 import { api } from '../api';
 
@@ -37,19 +67,28 @@ export default function Portfolio() {
     <div className="space-y-6">
       {/* Balance */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <div className="bg-card border border-border rounded-lg p-5 card-hover">
-          <div className="text-[10px] uppercase tracking-widest text-text-secondary mb-2">Cash Balance</div>
+        <div className="bg-card border border-border rounded-lg p-5 card-hover border-l-green">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-[10px] uppercase tracking-widest text-text-secondary">Cash Balance</div>
+            <span className="text-sm opacity-40">💰</span>
+          </div>
           <div className="text-3xl font-bold font-mono text-accent-green">
             ${portfolio ? (portfolio.balance_cents / 100).toFixed(2) : '0.00'}
           </div>
         </div>
-        <div className="bg-card border border-border rounded-lg p-5 card-hover">
-          <div className="text-[10px] uppercase tracking-widest text-text-secondary mb-2">Open Positions</div>
-          <div className="text-3xl font-bold font-mono">{positions.length}</div>
+        <div className="bg-card border border-border rounded-lg p-5 card-hover border-l-blue">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-[10px] uppercase tracking-widest text-text-secondary">Open Positions</div>
+            <span className="text-sm opacity-40">📊</span>
+          </div>
+          <div className={`text-3xl font-bold font-mono ${positions.length > 0 ? 'text-accent-blue' : 'text-white'}`}>{positions.length}</div>
         </div>
-        <div className="bg-card border border-border rounded-lg p-5 card-hover">
-          <div className="text-[10px] uppercase tracking-widest text-text-secondary mb-2">Open Orders</div>
-          <div className="text-3xl font-bold font-mono">{orders.length}</div>
+        <div className="bg-card border border-border rounded-lg p-5 card-hover border-l-purple">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-[10px] uppercase tracking-widest text-text-secondary">Open Orders</div>
+            <span className="text-sm opacity-40">📋</span>
+          </div>
+          <div className={`text-3xl font-bold font-mono ${orders.length > 0 ? 'text-accent-purple' : 'text-white'}`}>{orders.length}</div>
         </div>
       </div>
 
@@ -77,7 +116,9 @@ export default function Portfolio() {
               </thead>
               <tbody>
                 {positions.map((pos, i) => (
-                  <tr key={i} className="border-b border-border/50 hover:bg-surface/50">
+                  <tr key={i} className={`border-b border-border/50 ${
+                    pos.unrealized_pnl_cents > 0 ? 'row-win' : pos.unrealized_pnl_cents < 0 ? 'row-loss' : 'hover:bg-surface/50'
+                  }`}>
                     <td className="px-4 py-2.5 font-mono text-white">{pos.ticker}</td>
                     <td className="px-4 py-2.5 max-w-[180px] truncate text-text-secondary">{pos.market_title || '--'}</td>
                     <td className="px-4 py-2.5 text-center">
@@ -85,12 +126,14 @@ export default function Portfolio() {
                         pos.side === 'yes' ? 'bg-accent-green/10 text-accent-green' : 'bg-accent-red/10 text-accent-red'
                       }`}>{pos.side}</span>
                     </td>
-                    <td className="px-4 py-2.5 text-right font-mono">{pos.quantity}</td>
+                    <td className="px-4 py-2.5 text-right font-mono text-accent-blue">{pos.quantity}</td>
                     <td className="px-4 py-2.5 text-right font-mono">{pos.avg_price_cents}c</td>
                     <td className="px-4 py-2.5 text-right font-mono">{pos.current_price_cents || '--'}c</td>
                     <td className="px-4 py-2.5 text-right font-mono">
                       {pos.unrealized_pnl_cents != null ? (
-                        <span className={pos.unrealized_pnl_cents >= 0 ? 'text-accent-green' : 'text-accent-red'}>
+                        <span className={`inline-block px-1.5 py-0.5 rounded font-semibold text-[10px] ${
+                          pos.unrealized_pnl_cents >= 0 ? 'bg-accent-green/10 text-accent-green' : 'bg-accent-red/10 text-accent-red'
+                        }`}>
                           {pos.unrealized_pnl_cents >= 0 ? '+' : ''}${(pos.unrealized_pnl_cents / 100).toFixed(2)}
                         </span>
                       ) : '--'}

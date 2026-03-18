@@ -1,13 +1,58 @@
+/*
+ * Dashboard.jsx — Main overview dashboard for the prediction market bot.
+ *
+ * Displays a high-level summary of the trading strategy, portfolio health,
+ * performance metrics, and model diagnostics.
+ *
+ * Key sections:
+ *   - Strategy Overview: Shows the ensemble model configuration (Random Forest +
+ *     Gradient Boosting), entry/exit thresholds, and confidence requirements.
+ *   - Stat Cards: Balance, open positions count, win rate (W/L breakdown),
+ *     Sharpe ratio, total P&L, and profit factor.
+ *   - Equity Curve Chart: Line chart plotting cumulative equity over trade history.
+ *   - Feature Importance Chart: Horizontal bar chart of the top 10 features used
+ *     by the trained model, expressed as percentage importance.
+ *   - Latest Scan Summary: Events scanned, markets scanned, RF signals, AI signals,
+ *     and exit signals from the most recent scan run.
+ *   - Strategy Formulas: Reference cards for entry/exit rules, log return, and
+ *     Sharpe ratio calculations.
+ *
+ * API endpoints called (via the `api` module):
+ *   - api.getPortfolio()        — Fetches current balance and open positions.
+ *   - api.getPerformance()      — Fetches performance metrics and equity curve data.
+ *   - api.getFeatureImportance() — Fetches model feature importance scores.
+ *
+ * Props:
+ *   - status      — System status object containing model metadata (n_estimators, n_features).
+ *   - scanResult  — Results from the latest market scan (triggers data refresh on change).
+ *   - onScan      — Callback to initiate a new scan.
+ *   - scanning    — Boolean indicating whether a scan is currently in progress.
+ *
+ * Sub-components:
+ *   - StatCard — Reusable card displaying a labeled metric with optional subtitle
+ *     and color-coded value.
+ */
 import { useState, useEffect } from 'react';
 import { api } from '../api';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, Cell } from 'recharts';
 
-function StatCard({ label, value, sub, color = 'text-white' }) {
+function StatCard({ label, value, sub, color = 'text-white', borderColor = '', progress = null, icon = null }) {
   return (
-    <div className="bg-card border border-border rounded-lg p-4 card-hover">
-      <div className="text-[10px] uppercase tracking-widest text-text-secondary mb-2">{label}</div>
+    <div className={`bg-card border border-border rounded-lg p-4 card-hover ${borderColor}`}>
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-[10px] uppercase tracking-widest text-text-secondary">{label}</div>
+        {icon && <span className="text-sm opacity-40">{icon}</span>}
+      </div>
       <div className={`text-2xl font-bold font-mono ${color}`}>{value}</div>
       {sub && <div className="text-[10px] text-text-secondary mt-1.5">{sub}</div>}
+      {progress !== null && (
+        <div className="progress-bar">
+          <div className="fill" style={{
+            width: `${Math.min(Math.max(progress, 0), 100)}%`,
+            background: progress >= 60 ? '#00ff87' : progress >= 50 ? '#ffb800' : '#ff3b3b'
+          }} />
+        </div>
+      )}
     </div>
   );
 }
@@ -70,29 +115,44 @@ export default function Dashboard({ status, scanResult, onScan, scanning }) {
           label="Balance"
           value={portfolio ? `$${(portfolio.balance_cents / 100).toFixed(2)}` : '--'}
           color="text-accent-green"
+          borderColor="border-l-green"
+          icon="💰"
         />
-        <StatCard label="Positions" value={portfolio?.positions?.length ?? '--'} />
+        <StatCard label="Positions" value={portfolio?.positions?.length ?? '--'} borderColor="border-l-blue" icon="📊" />
         <StatCard
           label="Win Rate"
           value={metrics.total_trades > 0 ? `${(metrics.win_rate * 100).toFixed(1)}%` : '--'}
           color={metrics.win_rate >= 0.6 ? 'text-accent-green' : metrics.win_rate >= 0.5 ? 'text-accent-yellow' : 'text-accent-red'}
           sub={metrics.total_trades > 0 ? `${metrics.wins}W / ${metrics.losses}L` : null}
+          borderColor={metrics.win_rate >= 0.6 ? 'border-l-green' : metrics.win_rate >= 0.5 ? 'border-l-yellow' : 'border-l-red'}
+          progress={metrics.total_trades > 0 ? metrics.win_rate * 100 : null}
         />
         <StatCard
           label="Sharpe"
           value={metrics.sharpe_ratio ?? '--'}
           color={metrics.sharpe_ratio >= 2 ? 'text-accent-green' : metrics.sharpe_ratio >= 1 ? 'text-accent-yellow' : 'text-accent-red'}
-          sub={metrics.sharpe_label || null}
+          sub={metrics.sharpe_label ? (
+            <span className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase ${
+              metrics.sharpe_ratio >= 2 ? 'bg-accent-green/10 text-accent-green' :
+              metrics.sharpe_ratio >= 1 ? 'bg-accent-yellow/10 text-accent-yellow' :
+              'bg-accent-red/10 text-accent-red'
+            }`}>{metrics.sharpe_label}</span>
+          ) : null}
+          borderColor={metrics.sharpe_ratio >= 2 ? 'border-l-green' : metrics.sharpe_ratio >= 1 ? 'border-l-yellow' : 'border-l-red'}
         />
         <StatCard
           label="P&L"
           value={metrics.total_pnl_cents != null ? `$${(metrics.total_pnl_cents / 100).toFixed(2)}` : '--'}
-          color={metrics.total_pnl_cents > 0 ? 'text-accent-green' : 'text-accent-red'}
+          color={metrics.total_pnl_cents > 0 ? 'text-accent-green' : metrics.total_pnl_cents < 0 ? 'text-accent-red' : 'text-white'}
+          borderColor={metrics.total_pnl_cents > 0 ? 'border-l-green' : metrics.total_pnl_cents < 0 ? 'border-l-red' : 'border-l-white'}
+          icon={metrics.total_pnl_cents > 0 ? '📈' : metrics.total_pnl_cents < 0 ? '📉' : '➖'}
         />
         <StatCard
           label="Profit Factor"
           value={metrics.profit_factor ?? '--'}
-          color={metrics.profit_factor >= 1.5 ? 'text-accent-green' : 'text-white'}
+          color={metrics.profit_factor >= 2 ? 'text-accent-green' : metrics.profit_factor >= 1.5 ? 'text-accent-cyan' : metrics.profit_factor >= 1 ? 'text-accent-yellow' : 'text-accent-red'}
+          borderColor={metrics.profit_factor >= 1.5 ? 'border-l-green' : metrics.profit_factor >= 1 ? 'border-l-yellow' : 'border-l-red'}
+          icon="⚖️"
         />
       </div>
 
@@ -152,25 +212,25 @@ export default function Dashboard({ status, scanResult, onScan, scanning }) {
         <div className="bg-card border border-border rounded-lg p-5">
           <h3 className="text-[10px] uppercase tracking-widest text-text-secondary mb-3">Latest Scan</h3>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
-            <div>
-              <span className="text-text-secondary text-xs">Events</span>
-              <div className="font-mono">{scanResult.events_scanned}</div>
+            <div className="bg-surface border border-border rounded-lg p-2.5 border-l-blue">
+              <span className="text-text-secondary text-[10px] uppercase tracking-widest">Events</span>
+              <div className="font-mono text-accent-blue font-bold">{scanResult.events_scanned?.toLocaleString()}</div>
             </div>
-            <div>
-              <span className="text-text-secondary text-xs">Markets</span>
-              <div className="font-mono">{scanResult.markets_scanned}</div>
+            <div className="bg-surface border border-border rounded-lg p-2.5 border-l-purple">
+              <span className="text-text-secondary text-[10px] uppercase tracking-widest">Markets</span>
+              <div className="font-mono text-accent-purple font-bold">{scanResult.markets_scanned?.toLocaleString()}</div>
             </div>
-            <div>
-              <span className="text-text-secondary text-xs">RF Signals</span>
-              <div className="font-mono text-accent-green">{scanResult.rf_signals}</div>
+            <div className={`bg-surface border border-border rounded-lg p-2.5 border-l-green ${scanResult.rf_signals > 0 ? 'glow-green' : ''}`}>
+              <span className="text-text-secondary text-[10px] uppercase tracking-widest">RF Signals</span>
+              <div className="font-mono text-accent-green font-bold">{scanResult.rf_signals}</div>
             </div>
-            <div>
-              <span className="text-text-secondary text-xs">AI Signals</span>
-              <div className="font-mono">{scanResult.ai_signals}</div>
+            <div className={`bg-surface border border-border rounded-lg p-2.5 border-l-cyan`}>
+              <span className="text-text-secondary text-[10px] uppercase tracking-widest">AI Signals</span>
+              <div className="font-mono text-accent-cyan font-bold">{scanResult.ai_signals}</div>
             </div>
-            <div>
-              <span className="text-text-secondary text-xs">Exit Signals</span>
-              <div className="font-mono text-accent-red">{scanResult.exit_signals}</div>
+            <div className={`bg-surface border border-border rounded-lg p-2.5 border-l-red ${scanResult.exit_signals > 0 ? 'glow-red' : ''}`}>
+              <span className="text-text-secondary text-[10px] uppercase tracking-widest">Exit Signals</span>
+              <div className="font-mono text-accent-red font-bold">{scanResult.exit_signals}</div>
             </div>
           </div>
         </div>

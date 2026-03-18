@@ -1,3 +1,34 @@
+/*
+ * Markets Component
+ *
+ * Displays a browsable, sortable table of prediction market events and their
+ * constituent markets. Includes an inline MarketDetail sub-component for
+ * deep-diving into a single market's analysis and trading signals.
+ *
+ * Key Sections:
+ *   - Markets Table: All markets across fetched events, flattened and sorted by
+ *     volume descending. Columns: ticker, market title, parent event title,
+ *     YES bid, YES ask, spread, volume, and open interest. Each row has an
+ *     "Analyze" button that opens the detail view.
+ *   - MarketDetail (inline sub-component): Shows model probability vs. market
+ *     probability, calculated edge, bid/ask spread, entry/exit signal indicators,
+ *     order book stats (YES bid, YES ask, volume, OI), and an expandable list
+ *     of all model features.
+ *   - Controls: A dropdown to set the event fetch limit (10/20/50) and a
+ *     refresh button.
+ *
+ * API Endpoints Called:
+ *   - api.getEvents(limit)   — Fetches a list of events (each containing markets)
+ *                               with a configurable limit.
+ *   - api.getMarket(ticker)  — Fetches detailed market data and model analysis
+ *                               for a single ticker (used by MarketDetail).
+ *
+ * Data Displayed:
+ *   - Events: title, nested markets array.
+ *   - Markets: ticker, title, yes_bid, yes_ask, volume, open_interest.
+ *   - Analysis (detail view): model_probability, market_probability, edge,
+ *     entry_signal, exit_signal, entry_threshold, exit_threshold, and features map.
+ */
 import { useState, useEffect } from 'react';
 import { api } from '../api';
 

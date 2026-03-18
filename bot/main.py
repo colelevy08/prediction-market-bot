@@ -1,4 +1,38 @@
-"""Main entry point for the prediction market trading bot."""
+"""
+CLI entry point for the prediction market trading bot.
+
+Provides a command-line interface for running the bot in three modes:
+
+  1. Default (dry run): Fetches markets from Kalshi, analyzes with Claude AI,
+     displays signals in a rich terminal table, but does NOT place any orders.
+     Use this to preview what the bot would do.
+
+  2. --live: Same as default but actually executes trades on Kalshi. Each signal
+     passes through the RiskManager before order placement. Portfolio is refreshed
+     after each trade.
+
+  3. --arbitrage: Scans for cross-platform price discrepancies between Kalshi
+     and DraftKings, displaying opportunities in a terminal table.
+
+  4. --portfolio: Simply displays current Kalshi portfolio (balance + positions).
+
+The CLI uses the Rich library for formatted terminal output (tables, panels, colors).
+It validates configuration (Kalshi credentials, Anthropic API key) before proceeding
+and displays the current environment (DEMO vs PRODUCTION).
+
+Note: The CLI uses Claude AI analysis (bot.analyzer), NOT the RF ensemble model.
+The RF model is used by the server (bot.server) and paper trader (bot.backtester).
+
+Connects to: bot.config (validation), bot.kalshi_client (market data + orders),
+bot.analyzer (Claude AI signals), bot.risk_manager (trade validation),
+bot.draftkings_client + bot.arbitrage (cross-platform scan).
+
+Usage:
+  python -m bot.main                  # Dry run with AI analysis
+  python -m bot.main --live           # Execute real trades
+  python -m bot.main --arbitrage      # Cross-platform arbitrage scan
+  python -m bot.main --portfolio      # Show portfolio only
+"""
 
 from __future__ import annotations
 
@@ -16,10 +50,11 @@ from bot.analyzer import MarketAnalyzer
 from bot.risk_manager import RiskManager
 from bot.arbitrage import detect_arbitrage
 
-console = Console()
+console = Console()  # Rich console for formatted terminal output
 
 
 def print_banner():
+    """Display the bot's ASCII banner with name and description."""
     console.print(Panel.fit(
         "[bold cyan]Prediction Market Trading Bot[/]\n"
         "Kalshi + DraftKings | AI-Powered Analysis",
@@ -28,6 +63,11 @@ def print_banner():
 
 
 def print_signals(signals, risk_manager, portfolio):
+    """Display trading signals in a formatted Rich table with risk check status.
+
+    Each signal shows: ticker, market name, side, edge, confidence, fair/market
+    probabilities, recommended size, and whether it passes the risk manager checks.
+    """
     if not signals:
         console.print("[yellow]No actionable signals found.[/]")
         return
@@ -63,6 +103,7 @@ def print_signals(signals, risk_manager, portfolio):
 
 
 def print_portfolio(portfolio):
+    """Display the current portfolio balance and open positions in Rich tables."""
     table = Table(title="Portfolio")
     table.add_column("Balance", style="green")
     table.add_column("Positions")
@@ -89,7 +130,12 @@ def print_portfolio(portfolio):
 
 
 def run_scan(kalshi: KalshiClient, analyzer: MarketAnalyzer, risk_manager: RiskManager, live: bool):
-    """Main scan loop: fetch markets, analyze, optionally execute."""
+    """Main scan loop: fetch markets from Kalshi, analyze with Claude AI, display signals.
+
+    In dry run mode (live=False), only displays signals without placing orders.
+    In live mode (live=True), executes trades that pass the risk manager checks,
+    refreshing the portfolio after each successful order.
+    """
     console.print("\n[bold]Fetching events from Kalshi...[/]")
     events = kalshi.get_events(limit=config.max_events_to_analyze)
     console.print(f"  Found [cyan]{len(events)}[/] events with [cyan]{sum(len(e.markets) for e in events)}[/] markets")
@@ -126,7 +172,11 @@ def run_scan(kalshi: KalshiClient, analyzer: MarketAnalyzer, risk_manager: RiskM
 
 
 def run_arbitrage_scan(kalshi: KalshiClient, dk: DraftKingsClient):
-    """Scan for cross-platform arbitrage opportunities."""
+    """Scan for cross-platform arbitrage opportunities between Kalshi and DraftKings.
+
+    Fetches open markets from both platforms, runs the arbitrage detection algorithm,
+    and displays any opportunities in a formatted Rich table.
+    """
     console.print("\n[bold]Scanning for cross-platform arbitrage...[/]")
 
     events = kalshi.get_events(limit=config.max_events_to_analyze)
@@ -160,6 +210,14 @@ def run_arbitrage_scan(kalshi: KalshiClient, dk: DraftKingsClient):
 
 
 def main():
+    """CLI entry point: parse arguments, validate config, and run the selected mode.
+
+    Modes:
+      - Default (dry run): Fetch + analyze + display signals (no orders placed).
+      - --live:            Fetch + analyze + execute real trades on Kalshi.
+      - --arbitrage:       Cross-platform arbitrage scan (Kalshi vs DraftKings).
+      - --portfolio:       Display current Kalshi portfolio and exit.
+    """
     parser = argparse.ArgumentParser(description="Prediction Market Trading Bot")
     parser.add_argument("--live", action="store_true", help="Execute real trades (default: dry run)")
     parser.add_argument("--arbitrage", action="store_true", help="Scan for cross-platform arbitrage")
@@ -168,7 +226,7 @@ def main():
 
     print_banner()
 
-    # Validate configuration
+    # Validate configuration and display environment (DEMO vs PRODUCTION)
     env_label = "[yellow]DEMO[/]" if config.kalshi_use_demo else "[red]PRODUCTION[/]"
     console.print(f"Environment: {env_label}")
 

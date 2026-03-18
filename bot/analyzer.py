@@ -1,4 +1,28 @@
-"""AI-powered market analysis using Claude to generate trading signals."""
+"""
+AI-powered market analysis using Anthropic's Claude API.
+
+This module provides an alternative (or supplement) to the Random Forest ensemble
+for generating trading signals. It sends structured prompts to Claude asking it to:
+
+  1. Understand what the prediction market event is actually asking.
+  2. Assess publicly available information relevant to the outcome.
+  3. Estimate a "true" probability independent of the current market price.
+  4. Calculate the edge (fair_prob - market_prob) and recommend a side.
+
+The response is parsed as JSON containing: fair_probability, confidence, side, reasoning.
+Position sizing uses a simplified quarter-Kelly formula: size = max_bet * edge * confidence * 0.25.
+
+Filtering: Signals are only returned when edge >= min_edge_threshold AND confidence >= 55%.
+Markets with volume < 100 are skipped to avoid illiquid contracts.
+
+This analyzer is optional; the bot primarily uses the RF+GB ensemble (rf_model.py).
+Claude analysis can be triggered via the "use_ai" flag in the /api/scan endpoint or
+from the CLI. It's slower and costs API credits, but provides qualitative reasoning.
+
+Connects to: Anthropic Messages API (Claude claude-sonnet-4-6 model), bot.config (API key, max bet),
+bot.models (Event, Market, Side, TradingSignal).
+Used by: bot.server (POST /api/scan with use_ai=true), bot.main (CLI scan).
+"""
 
 from __future__ import annotations
 
@@ -10,6 +34,10 @@ from bot.config import config
 from bot.models import Event, Market, Side, TradingSignal
 
 
+# Structured prompt template for Claude AI market analysis.
+# The prompt asks Claude to reason step-by-step about the true probability of an
+# event, compare it to the market price, and return a JSON response with fields:
+# fair_probability, confidence, side, and reasoning.
 ANALYSIS_PROMPT = """You are a quantitative analyst for prediction markets. Analyze the following market and estimate the TRUE probability of the event occurring.
 
 **Event:** {event_title}
@@ -38,13 +66,30 @@ Respond with ONLY valid JSON (no markdown, no explanation outside JSON):
 
 
 class MarketAnalyzer:
-    """Uses Claude to analyze prediction markets and generate trading signals."""
+    """Uses Anthropic's Claude API to analyze prediction markets and generate trading signals.
+
+    Each market analysis costs one Claude API call (~500 tokens output). The analyzer
+    is optional and significantly slower than the RF ensemble, but provides qualitative
+    reasoning that can complement quantitative signals.
+    """
 
     def __init__(self):
+        """Initialize the Anthropic client with the configured API key."""
         self.client = anthropic.Anthropic(api_key=config.anthropic_api_key)
 
     def analyze_market(self, event: Event, market: Market) -> TradingSignal | None:
-        """Analyze a single market and return a trading signal if there's edge."""
+        """Analyze a single market using Claude and return a TradingSignal if there's edge.
+
+        Sends the market details to Claude, parses the JSON response, calculates
+        the edge (fair_prob - market_prob), and builds a TradingSignal.
+
+        Args:
+            event: Parent event containing the market.
+            market: The specific market contract to analyze.
+
+        Returns:
+            TradingSignal if analysis succeeds, None if parsing fails or API errors.
+        """
         prompt = ANALYSIS_PROMPT.format(
             event_title=event.title,
             market_title=market.title,
@@ -95,7 +140,12 @@ class MarketAnalyzer:
             return None
 
     def _calculate_size(self, edge: float, confidence: float) -> int:
-        """Kelly-criterion inspired position sizing (fractional Kelly at 25%)."""
+        """Kelly-criterion inspired position sizing (quarter-Kelly for extra safety).
+
+        Uses a simplified formula: size = max_bet * edge * confidence * 0.25.
+        Quarter-Kelly (rather than the RF model's half-Kelly) is used here because
+        Claude's probability estimates are less calibrated than the trained ensemble.
+        """
         if edge <= 0 or confidence < 0.5:
             return 0
 
@@ -107,7 +157,12 @@ class MarketAnalyzer:
         return max(0, min(size, config.max_bet_amount_cents))
 
     def analyze_events(self, events: list[Event]) -> list[TradingSignal]:
-        """Analyze all markets across events and return actionable signals."""
+        """Analyze all markets across events and return actionable signals.
+
+        Filters: skips closed markets and markets with volume < 100 (illiquid).
+        Only returns signals where edge >= min_edge_threshold AND confidence >= 55%.
+        Results are sorted by expected value (edge * confidence) descending.
+        """
         signals = []
         for event in events:
             for market in event.markets:

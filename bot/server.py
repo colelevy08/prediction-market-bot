@@ -1,4 +1,35 @@
-"""FastAPI server providing REST endpoints for the React UI."""
+"""
+FastAPI REST server for the prediction market trading bot.
+
+This module is the central backend that powers the React + Vite frontend.
+It exposes 32+ REST endpoints organized into logical groups:
+
+  - Status & Config:    GET /api/status, PATCH /api/config
+  - Market Data:        GET /api/events, GET /api/market/{ticker}
+  - Portfolio & Orders: GET /api/portfolio, POST /api/trade, etc.
+  - Signals:            POST /api/scan, GET /api/signals
+  - Performance:        GET /api/performance, GET /api/model/features
+  - Backtesting:        POST /api/backtest, POST /api/backtest/sweep
+  - Paper Trading:      GET /api/paper, POST /api/paper/scan, POST /api/paper/train
+  - Auto-Scan/Trade:    POST /api/autoscan, POST /api/autotrade
+  - Arbitrage:          GET /api/arbitrage
+  - History (Supabase): GET /api/history/trades, /scans, /performance, /training
+  - Notifications:      POST /api/notifications/test
+  - Webhook:            POST /api/webhook (external trigger for scans/retrains)
+  - Export:             GET /api/export/trades (CSV download)
+
+Connects to:
+  - Kalshi Trade API v2 (via KalshiClient) for market data and order execution
+  - Supabase (via Database) for persistent storage of trades, scans, training data
+  - APScheduler for background auto-scanning (every 60s) and scheduled retraining
+  - Slack/Discord webhooks (via Notifier) for trade alerts
+
+Deployment: Railway (backend), with the React frontend on Vercel calling these endpoints.
+
+The server maintains in-memory shared state (module-level globals) for:
+  - Client instances (kalshi, dk, rf_generator, etc.)
+  - A cache dict (_cache) holding latest scan results, trade logs, and scheduler state
+"""
 
 from __future__ import annotations
 
@@ -34,56 +65,118 @@ logger = logging.getLogger("predictionbot")
 
 
 # ── Shared State ─────────────────────────────────────────────────────────────
+# Module-level globals hold all singleton service instances. They are initialized
+# in the lifespan() context manager when the FastAPI app starts, and cleaned up
+# when it shuts down. Using globals here (rather than dependency injection) keeps
+# the endpoint handlers simple and avoids passing state through every function.
 
-kalshi: KalshiClient | None = None
-dk: DraftKingsClient | None = None
-rf_generator: RFSignalGenerator | None = None
-ai_analyzer: MarketAnalyzer | None = None
-risk_manager: RiskManager | None = None
-performance: PerformanceTracker | None = None
-paper_trader: PaperTrader | None = None
-db: Database | None = None
-scheduler: AsyncIOScheduler | None = None
-notifier: Notifier | None = None
+kalshi: KalshiClient | None = None          # Kalshi Trade API v2 client
+dk: DraftKingsClient | None = None          # DraftKings scraper for arbitrage
+rf_generator: RFSignalGenerator | None = None  # RF+GB ensemble signal generator
+ai_analyzer: MarketAnalyzer | None = None   # Claude AI analyzer (optional)
+risk_manager: RiskManager | None = None     # Pre-trade risk validation
+performance: PerformanceTracker | None = None  # Live trade performance tracking
+paper_trader: PaperTrader | None = None     # Paper trading simulator
+db: Database | None = None                  # Supabase persistence layer
+scheduler: AsyncIOScheduler | None = None   # APScheduler for background jobs
+notifier: Notifier | None = None            # Slack/Discord webhook notifications
 
-# Cache for latest scan results
+# In-memory cache for the latest scan results and trade logs.
+# This avoids re-scanning Kalshi on every frontend poll. The cache is updated
+# by _auto_scan_job() (background) and run_scan() (on-demand).
+# Logs are trimmed to 500 entries max to prevent unbounded memory growth.
 _cache: dict[str, Any] = {
-    "events": [],
-    "signals": [],
-    "exit_signals": [],
-    "arbitrage": [],
-    "last_scan": None,
-    "auto_scan_enabled": False,
-    "auto_trade_enabled": False,
-    "auto_scan_log": [],
+    "events": [],               # Latest event data from Kalshi
+    "signals": [],              # Latest validated trading signals (RF + AI)
+    "exit_signals": [],         # Latest exit signals for open positions
+    "arbitrage": [],            # Latest arbitrage opportunities
+    "last_scan": None,          # ISO timestamp of most recent scan
+    "auto_scan_enabled": False, # Whether the 60s background scan loop is running
+    "auto_trade_enabled": False,# Whether live orders are auto-executed (requires auto_scan)
+    "auto_scan_log": [],        # Combined scan log for the Settings page
+    "paper_trade_log": [],      # Paper (shadow) trade entries/exits
+    "live_trade_log": [],       # Live trade entries/exits on Kalshi
 }
 
 
 async def _auto_scan_job():
-    """Background job that runs every 60s when auto-scan is enabled."""
+    """Background job that scans ALL of Kalshi for edges (runs every 60 seconds).
+
+    This is the main workhorse of the bot when auto-scan is enabled. It:
+    1. Fetches every open event from Kalshi via cursor pagination (~5000 events, ~41000 markets).
+    2. Runs the paper trader's scan_and_trade() to generate signals and simulate fills.
+    3. If auto_trade is also enabled, generates live RF signals, checks exits on real
+       positions, and places real orders through the Kalshi API.
+    4. Logs all activity to _cache for the frontend to display.
+    5. Persists paper state and scan logs to Supabase.
+
+    Maintains separate logs for shadow (paper) and live trades so the UI can show both.
+    All exceptions are caught at the top level to prevent the scheduler from crashing.
+    """
     if not kalshi or not config.validate_kalshi():
         return
 
     try:
-        events = kalshi.get_events(limit=config.max_events_to_analyze)
-        now = datetime.now(timezone.utc).isoformat()
+        scan_start = datetime.now(timezone.utc)
+        now = scan_start.isoformat()
 
-        # Paper trading scan
+        # Fetch ALL events from Kalshi (paginated, ~5000+ events)
+        events = kalshi.get_all_events()
+        total_events = len(events)
+        total_markets = sum(len(e.markets) for e in events)
+
+        logger.info(f"Full Kalshi scan: {total_events} events, {total_markets} markets")
+
+        # ── Shadow (paper) trading scan ──
+        # Paper trading always runs when the model is trained. It simulates trades
+        # using real market data without placing actual orders on Kalshi.
+        paper_entries = []
+        paper_exits = []
         if paper_trader and paper_trader.generator.model.is_trained:
             result = paper_trader.scan_and_trade(events)
             paper_trader.save_state()
-            entries_count = len(result.get("entries", []))
-            exits_count = len(result.get("exits", []))
+            paper_entries = result.get("entries", [])
+            paper_exits = result.get("exits", [])
             open_pos = result.get("open_positions", 0)
-            _cache["auto_scan_log"].append({
-                "time": now, "type": "paper",
-                "entries": entries_count, "exits": exits_count,
-                "open_positions": open_pos,
-            })
-            if db:
-                db.insert_scan_log("paper", 0, entries_count, exits_count, open_pos)
 
-        # Live trading scan (only when auto_trade is explicitly enabled)
+            # Log each shadow trade individually
+            for entry in paper_entries:
+                _cache["paper_trade_log"].append({
+                    "time": now,
+                    "action": "entry",
+                    "ticker": entry.get("ticker", ""),
+                    "side": entry.get("side", ""),
+                    "price": entry.get("entry_price", 0),
+                    "contracts": entry.get("contracts", 1),
+                    "model_prob": entry.get("model_prob", 0),
+                    "edge": entry.get("edge", 0),
+                })
+            for ex in paper_exits:
+                _cache["paper_trade_log"].append({
+                    "time": now,
+                    "action": "exit",
+                    "ticker": ex.get("ticker", ""),
+                    "side": ex.get("side", ""),
+                    "entry_price": ex.get("entry_price", 0),
+                    "exit_price": ex.get("exit_price", 0),
+                    "pnl_cents": ex.get("pnl_cents", 0),
+                })
+
+            scan_entry = {
+                "time": now, "type": "paper",
+                "events_scanned": total_events,
+                "markets_scanned": total_markets,
+                "entries": len(paper_entries), "exits": len(paper_exits),
+                "open_positions": open_pos,
+            }
+            _cache["auto_scan_log"].append(scan_entry)
+            if db:
+                db.insert_scan_log("paper", total_markets, len(paper_entries), len(paper_exits), open_pos)
+
+        # ── Live trading scan (only when auto_trade is explicitly enabled) ──
+        # Live trading is a separate opt-in: auto_scan must be on AND auto_trade
+        # must be explicitly toggled. This two-step design prevents accidental
+        # real-money trades when the user only wants paper trading.
         if _cache.get("auto_trade_enabled") and rf_generator and risk_manager:
             rf_signals = rf_generator.generate_signals(events)
             portfolio = kalshi.get_portfolio_summary()
@@ -102,6 +195,11 @@ async def _auto_scan_job():
                     )
                     kalshi.place_order(order)
                     risk_manager.record_trade()
+                    _cache["live_trade_log"].append({
+                        "time": now, "action": "exit",
+                        "ticker": sig.ticker, "side": sig.side.value,
+                        "price": int(sig.market_probability * 100),
+                    })
                     logger.info(f"Auto-exit: {sig.ticker}")
                 except Exception as e:
                     logger.error(f"Auto-exit failed for {sig.ticker}: {e}")
@@ -115,6 +213,13 @@ async def _auto_scan_job():
                     order = risk_manager.build_order(sig)
                     kalshi.place_order(order)
                     risk_manager.record_trade()
+                    _cache["live_trade_log"].append({
+                        "time": now, "action": "entry",
+                        "ticker": sig.ticker, "side": sig.side.value,
+                        "price": order.price_cents,
+                        "count": order.count,
+                        "edge": round(sig.edge, 4),
+                    })
                     if notifier and notifier.is_configured:
                         notifier.notify_trade_entry(sig.ticker, sig.side.value, sig.market_probability, order.price_cents)
                     logger.info(f"Auto-entry: {sig.ticker} ({sig.side.value})")
@@ -122,34 +227,46 @@ async def _auto_scan_job():
                     logger.error(f"Auto-entry failed for {sig.ticker}: {e}")
 
             _cache["auto_scan_log"].append({
-                "time": now,
-                "type": "live",
+                "time": now, "type": "live",
+                "events_scanned": total_events,
+                "markets_scanned": total_markets,
                 "signals": len(rf_signals),
                 "exits": len(exit_signals),
             })
 
         # Update cache
         _cache["last_scan"] = now
+        elapsed = (datetime.now(timezone.utc) - scan_start).total_seconds()
+        logger.info(f"Scan complete: {total_events} events, {total_markets} markets in {elapsed:.1f}s | paper: +{len(paper_entries)}/-{len(paper_exits)}")
 
-        # Keep log trimmed to last 100 entries
-        if len(_cache["auto_scan_log"]) > 100:
-            _cache["auto_scan_log"] = _cache["auto_scan_log"][-100:]
+        # Trim logs to prevent unbounded memory growth — keep only the most recent 500 entries
+        for key in ("auto_scan_log", "paper_trade_log", "live_trade_log"):
+            if len(_cache[key]) > 500:
+                _cache[key] = _cache[key][-500:]
 
     except Exception as e:
         logger.error(f"Auto-scan failed: {e}")
 
 
 async def _retrain_job():
-    """Scheduled job to retrain the paper trader's model."""
+    """Scheduled job to retrain the paper trader's model on fresh settled market data.
+
+    Runs on the cron schedule defined by RETRAIN_DAYS and RETRAIN_HOUR config
+    (default: Mon/Wed/Fri at 3am UTC). Fetches up to 1000 settled markets from
+    Kalshi, merges them into the cumulative TrainingDataStore, and retrains the
+    RF+GB ensemble. Sends a notification on completion and logs the run to Supabase.
+    """
     if not kalshi or not config.validate_kalshi() or not paper_trader:
         return
     try:
         fetcher = HistoricalDataFetcher(kalshi)
         settled = fetcher.fetch_settled_markets(limit=1000)
-        result = paper_trader.train_model(settled)
-        logger.info(f"Scheduled retrain: {len(settled)} samples, {result}")
+        result = paper_trader.train_model(settled)  # Cumulative — merges with existing data
+        total = result.get("total_cumulative_samples", len(settled))
+        new = result.get("new_samples_added", len(settled))
+        logger.info(f"Scheduled retrain: {total} total samples ({new} new), {result}")
         if notifier and notifier.is_configured:
-            notifier.notify_retrain(len(settled), result.get("cv_accuracy", 0))
+            notifier.notify_retrain(total, result.get("cv_accuracy", 0))
         if db:
             db.insert_training_run(
                 samples=len(settled),
@@ -165,6 +282,20 @@ async def _retrain_job():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """FastAPI lifespan context manager: initializes all services on startup, cleans up on shutdown.
+
+    Startup sequence:
+      1. Initialize Database (Supabase), KalshiClient, DraftKingsClient, RFSignalGenerator,
+         RiskManager, PerformanceTracker, PaperTrader, and Notifier.
+      2. Restore paper trader state from Supabase (or local JSON fallback).
+      3. Optionally initialize MarketAnalyzer if Anthropic API key is configured.
+      4. Start APScheduler with a cron trigger for model retraining.
+
+    Shutdown sequence:
+      1. Stop the APScheduler.
+      2. Save paper trader state to persist positions and metrics.
+      3. Close all HTTP client connections (Notifier, KalshiClient, DraftKingsClient).
+    """
     global kalshi, dk, rf_generator, ai_analyzer, risk_manager, performance, paper_trader, db, scheduler, notifier
     db = Database()
     kalshi = KalshiClient()
@@ -179,10 +310,11 @@ async def lifespan(app: FastAPI):
     if config.validate_anthropic():
         ai_analyzer = MarketAnalyzer()
 
-    # Start APScheduler
+    # Start APScheduler for background jobs (auto-scan and model retraining)
     scheduler = AsyncIOScheduler()
 
-    # Add retrain schedule (default: Mon/Wed/Fri at 3am)
+    # Add retrain schedule (default: Mon/Wed/Fri at 3am UTC)
+    # The cron trigger uses APScheduler's day_of_week format (mon,wed,fri)
     if config.retrain_days:
         day_map = {"mon": "mon", "tue": "tue", "wed": "wed", "thu": "thu", "fri": "fri", "sat": "sat", "sun": "sun"}
         days = ",".join(day_map.get(d.strip().lower(), d.strip()) for d in config.retrain_days.split(","))
@@ -210,8 +342,13 @@ async def lifespan(app: FastAPI):
         dk.close()
 
 
+# ── FastAPI App Initialization ────────────────────────────────────────────────
+
 app = FastAPI(title="Prediction Market Bot", version="1.0.0", lifespan=lifespan)
 
+# CORS middleware allows the React frontend (on Vercel/localhost:5173) to call
+# this backend (on Railway/localhost:8000). allow_origins=["*"] is permissive;
+# tighten this in production to the actual frontend domain.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -222,31 +359,43 @@ app.add_middleware(
 
 
 # ── Request/Response Models ──────────────────────────────────────────────────
+# Pydantic models for endpoint request bodies. These define the JSON schema
+# that the frontend sends to each endpoint.
 
 class ScanRequest(BaseModel):
-    max_events: int = 20
-    use_ai: bool = False  # Use Claude in addition to RF model
+    """Request body for POST /api/scan."""
+    max_events: int = 20       # Number of top-volume events to scan
+    use_ai: bool = False       # If true, also run Claude AI analysis alongside RF model
 
 
 class TradeRequest(BaseModel):
-    ticker: str
-    side: str = "yes"
-    price_cents: int = 50
-    count: int = 1
+    """Request body for POST /api/trade (manual order placement)."""
+    ticker: str                # Kalshi market ticker (e.g., "KXBTC-24MAR14-T100000")
+    side: str = "yes"          # "yes" or "no"
+    price_cents: int = 50      # Limit price in cents (1-99)
+    count: int = 1             # Number of contracts
 
 
 class ConfigUpdate(BaseModel):
+    """Request body for PATCH /api/config (partial config update)."""
     max_bet_amount_cents: int | None = None
     min_edge_threshold: float | None = None
     max_daily_loss_cents: int | None = None
     max_open_positions: int | None = None
+    max_events_to_analyze: int | None = None
+    kelly_fraction: float | None = None
 
 
 # ── API Endpoints ────────────────────────────────────────────────────────────
 
 @app.get("/api/status")
 async def get_status():
-    """Get bot status and configuration."""
+    """Get bot status, connection state, configuration, and model info.
+
+    Returns a comprehensive status object used by the frontend Dashboard tab to
+    display connection indicators, config values, model state, paper trader state,
+    and auto-scan/trade toggle states.
+    """
     return {
         "kalshi_connected": config.validate_kalshi(),
         "anthropic_connected": config.validate_anthropic(),
@@ -258,6 +407,7 @@ async def get_status():
             "max_daily_loss_cents": config.max_daily_loss_cents,
             "max_open_positions": config.max_open_positions,
             "max_events_to_analyze": config.max_events_to_analyze,
+            "kelly_fraction": config.kelly_fraction,
         },
         "model": {
             "n_features": len(FEATURE_NAMES),
@@ -265,6 +415,16 @@ async def get_status():
             "n_estimators": rf_generator.model.n_estimators if rf_generator else 0,
             "is_trained": rf_generator.model.is_trained if rf_generator else False,
         },
+        "paper_trader": {
+            "initialized": paper_trader is not None,
+            "model_trained": paper_trader.generator.model.is_trained if paper_trader else False,
+            "training_samples": paper_trader.training_store.count if paper_trader else 0,
+            "balance_cents": paper_trader.balance_cents if paper_trader else 0,
+            "open_positions": len(paper_trader.positions) if paper_trader else 0,
+            "total_scans": paper_trader.total_scans if paper_trader else 0,
+        },
+        "auto_scan_enabled": _cache.get("auto_scan_enabled", False),
+        "auto_trade_enabled": _cache.get("auto_trade_enabled", False),
         "last_scan": _cache.get("last_scan"),
     }
 
@@ -283,7 +443,11 @@ async def get_portfolio():
 
 @app.get("/api/positions")
 async def get_positions():
-    """Get open positions with current prices."""
+    """Get open positions enriched with current market prices and unrealized P&L.
+
+    For each position, fetches the current market data to calculate the live
+    unrealized P&L based on the difference between current ask price and entry price.
+    """
     if not kalshi or not config.validate_kalshi():
         raise HTTPException(400, "Kalshi not connected")
     try:
@@ -308,9 +472,17 @@ async def get_positions():
 
 @app.post("/api/scan")
 async def run_scan(req: ScanRequest):
-    """
-    Run market scan: fetch events, generate RF signals,
-    optionally run AI analysis, check exits.
+    """Run an on-demand market scan triggered by the frontend Signals tab.
+
+    Pipeline:
+      1. Fetch top events by volume from Kalshi (limited to max_events).
+      2. Generate entry signals using the RF+GB ensemble model.
+      3. Optionally generate additional signals using Claude AI (if use_ai=true).
+      4. Check open positions for exit signals (target hit or expiry approaching).
+      5. Validate all signals through the RiskManager (balance, limits, edge checks).
+      6. Cache results for the GET /api/signals endpoint.
+
+    Returns signal counts and the full list of validated signals for the frontend.
     """
     if not kalshi or not config.validate_kalshi():
         raise HTTPException(400, "Kalshi not connected")
@@ -396,7 +568,12 @@ async def get_events(limit: int = 20):
 
 @app.get("/api/market/{ticker}")
 async def get_market(ticker: str):
-    """Get detailed market data with model analysis."""
+    """Get detailed market data with RF model analysis for a specific ticker.
+
+    Returns the raw market data plus model analysis including: model probability,
+    edge, whether entry/exit signals are active, all 106 features, and the
+    entry/exit price thresholds computed from the guide's rules.
+    """
     if not kalshi or not config.validate_kalshi():
         raise HTTPException(400, "Kalshi not connected")
 
@@ -412,7 +589,9 @@ async def get_market(ticker: str):
     model_prob = rf_generator.model.predict_probability(features) if rf_generator else 0.5
     market_price = market.mid_price_yes / 100
 
-    # Guide entry/exit checks
+    # Guide entry/exit checks:
+    # Entry: market is trading at half or less of model's fair value (2x undervalued)
+    # Exit: market has corrected to 90% of model's fair value
     entry_signal = market_price <= model_prob * 0.5
     exit_signal = market_price >= model_prob * 0.9
 
@@ -564,31 +743,39 @@ async def update_config(update: ConfigUpdate):
         config.max_daily_loss_cents = update.max_daily_loss_cents
     if update.max_open_positions is not None:
         config.max_open_positions = update.max_open_positions
+    if update.max_events_to_analyze is not None:
+        config.max_events_to_analyze = update.max_events_to_analyze
+    if update.kelly_fraction is not None:
+        config.kelly_fraction = update.kelly_fraction
     return {"status": "updated", "config": {
         "max_bet_amount_cents": config.max_bet_amount_cents,
         "min_edge_threshold": config.min_edge_threshold,
         "max_daily_loss_cents": config.max_daily_loss_cents,
         "max_open_positions": config.max_open_positions,
+        "max_events_to_analyze": config.max_events_to_analyze,
+        "kelly_fraction": config.kelly_fraction,
     }}
 
 
 # ── Backtest Endpoints ──────────────────────────────────────────────────────
 
 class BacktestRequest(BaseModel):
-    initial_balance_cents: int = 100_00
-    max_bet_cents: int = 25_00
-    entry_threshold: float = 0.5
-    exit_threshold: float = 0.9
-    min_confidence: float = 0.70
-    min_volume: int = 50
-    train_ratio: float = 0.6
-    max_markets: int = 200
+    """Request body for POST /api/backtest (single backtest run)."""
+    initial_balance_cents: int = 100_00   # Starting paper balance ($100)
+    max_bet_cents: int = 25_00            # Max bet per trade ($25)
+    entry_threshold: float = 0.5          # Entry: market <= model * threshold
+    exit_threshold: float = 0.9           # Exit: market >= model * threshold
+    min_confidence: float = 0.70          # Minimum model confidence to trade
+    min_volume: int = 50                  # Minimum market volume to consider
+    train_ratio: float = 0.6             # 60% train / 40% test split
+    max_markets: int = 200                # Max settled markets to fetch from Kalshi
 
 
 class SweepRequest(BaseModel):
-    entry_thresholds: list[float] = [0.4, 0.45, 0.5, 0.55, 0.6]
-    confidence_levels: list[float] = [0.60, 0.65, 0.70, 0.75, 0.80]
-    max_markets: int = 200
+    """Request body for POST /api/backtest/sweep (parameter optimization grid search)."""
+    entry_thresholds: list[float] = [0.4, 0.45, 0.5, 0.55, 0.6]   # Entry threshold values to test
+    confidence_levels: list[float] = [0.60, 0.65, 0.70, 0.75, 0.80]  # Confidence values to test
+    max_markets: int = 200                # Max settled markets to fetch
 
 
 @app.post("/api/backtest")
@@ -675,11 +862,13 @@ async def run_parameter_sweep(req: SweepRequest):
 # ── Paper Trading Endpoints ─────────────────────────────────────────────────
 
 class PaperTradeConfig(BaseModel):
-    balance_cents: int = 100_00
+    """Request body for POST /api/paper/configure (reset paper trader)."""
+    balance_cents: int = 100_00  # Starting balance in cents ($100)
 
 
 class AddFundsRequest(BaseModel):
-    amount_cents: int
+    """Request body for POST /api/paper/add-funds (top up without resetting)."""
+    amount_cents: int  # Amount to add to paper balance
 
 
 @app.get("/api/paper")
@@ -694,9 +883,17 @@ async def get_paper_state():
 async def configure_paper(req: PaperTradeConfig):
     """Reset and configure paper trader."""
     global paper_trader
-    paper_trader = PaperTrader()
+    paper_trader = PaperTrader(db=db)
     paper_trader.configure(req.balance_cents)
     return paper_trader.get_state()
+
+
+@app.post("/api/risk/reset-daily")
+async def reset_daily_pnl():
+    """Reset the daily P&L counter on the risk manager."""
+    if risk_manager:
+        risk_manager.reset_daily()
+    return {"status": "reset", "daily_pnl_cents": 0, "trades_today": 0}
 
 
 @app.post("/api/paper/add-funds")
@@ -728,7 +925,12 @@ async def paper_scan():
 
 @app.post("/api/paper/train")
 async def paper_train():
-    """Train the paper trader's model on historical data."""
+    """Train the paper trader's model on historical settled market data.
+
+    Fetches up to 1000 settled markets from Kalshi, extracts features from
+    trade history, and trains the RF+GB ensemble cumulatively (new samples are
+    merged with all previously seen data, deduplicated by ticker).
+    """
     if not kalshi or not config.validate_kalshi():
         raise HTTPException(400, "Kalshi not connected")
     if not paper_trader:
@@ -738,7 +940,13 @@ async def paper_train():
         fetcher = HistoricalDataFetcher(kalshi)
         settled = fetcher.fetch_settled_markets(limit=1000)
         result = paper_trader.train_model(settled)
-        return {"status": "trained", "samples": len(settled), **result}
+        return {
+            "status": "trained",
+            "samples_fetched": len(settled),
+            "total_cumulative_samples": result.get("total_cumulative_samples", len(settled)),
+            "new_samples_added": result.get("new_samples_added", len(settled)),
+            **result,
+        }
     except Exception as e:
         raise HTTPException(500, str(e))
 
@@ -746,17 +954,24 @@ async def paper_train():
 # ── Auto-Scan / Auto-Trade Scheduler ──────────────────────────────────────
 
 class AutoScanConfig(BaseModel):
-    enabled: bool = True
-    interval_seconds: int = 60
+    """Request body for POST /api/autoscan (toggle background scanning)."""
+    enabled: bool = True           # Enable or disable the background scan loop
+    interval_seconds: int = 60     # Seconds between scans (default: scan every 60s)
 
 
 class AutoTradeConfig(BaseModel):
-    enabled: bool = True
+    """Request body for POST /api/autotrade (toggle live order execution)."""
+    enabled: bool = True  # When true AND auto_scan is on, bot places real Kalshi orders
 
 
 @app.post("/api/autoscan")
 async def toggle_auto_scan(req: AutoScanConfig):
-    """Enable/disable automatic background scanning every N seconds."""
+    """Enable/disable automatic background scanning every N seconds.
+
+    When enabled, adds an APScheduler interval job that runs _auto_scan_job()
+    every interval_seconds (default 60). When disabled, removes the job.
+    The job scans all ~41000 Kalshi markets and runs paper + optionally live trading.
+    """
     global scheduler
     if not scheduler:
         raise HTTPException(500, "Scheduler not initialized")
@@ -808,6 +1023,71 @@ async def get_auto_scan_status():
     }
 
 
+@app.get("/api/trades/shadow")
+async def get_shadow_trade_log(limit: int = 200):
+    """Get the shadow (paper) trade log — every entry/exit the bot made."""
+    log = _cache.get("paper_trade_log", [])
+    # Also include historical trades from the paper trader itself
+    trades = []
+    if paper_trader:
+        for t in paper_trader.tracker.get_trade_history():
+            trades.append({
+                "time": t.get("exit_time", t.get("entry_time", "")),
+                "action": "closed",
+                "ticker": t.get("ticker", ""),
+                "side": t.get("side", ""),
+                "entry_price": t.get("entry_price", 0),
+                "exit_price": t.get("exit_price", 0),
+                "pnl_cents": t.get("pnl_cents", 0),
+                "won": t.get("won", False),
+                "log_return": t.get("log_return", 0),
+                "category": t.get("category", ""),
+            })
+    return {
+        "live_log": log[-limit:],
+        "completed_trades": trades[-limit:],
+        "total_shadow_trades": len(trades),
+        "open_positions": [
+            {
+                "ticker": p.ticker,
+                "side": p.side,
+                "entry_price": p.entry_price,
+                "contracts": p.contracts,
+                "model_prob": p.model_prob,
+                "entry_time": p.entry_time,
+            }
+            for p in (paper_trader.positions.values() if paper_trader else [])
+        ],
+    }
+
+
+@app.get("/api/trades/live")
+async def get_live_trade_log(limit: int = 200):
+    """Get the live trade log — every real entry/exit executed on Kalshi."""
+    log = _cache.get("live_trade_log", [])
+    # Also include historical trades from the live performance tracker
+    trades = []
+    if performance:
+        for t in performance.get_trade_history():
+            trades.append({
+                "time": t.get("exit_time", t.get("entry_time", "")),
+                "action": "closed",
+                "ticker": t.get("ticker", ""),
+                "side": t.get("side", ""),
+                "entry_price": t.get("entry_price", 0),
+                "exit_price": t.get("exit_price", 0),
+                "pnl_cents": t.get("pnl_cents", 0),
+                "won": t.get("won", False),
+                "log_return": t.get("log_return", 0),
+                "category": t.get("category", ""),
+            })
+    return {
+        "live_log": log[-limit:],
+        "completed_trades": trades[-limit:],
+        "total_live_trades": len(trades),
+    }
+
+
 # ── Database History Endpoints ─────────────────────────────────────────────
 
 @app.get("/api/history/trades")
@@ -845,8 +1125,9 @@ async def get_training_history(limit: int = 10):
 # ── Webhook Receiver ──────────────────────────────────────────────────────
 
 class WebhookPayload(BaseModel):
-    action: str = "scan"  # scan, retrain
-    params: dict = {}
+    """Request body for POST /api/webhook (external trigger from CI/cron/etc)."""
+    action: str = "scan"   # "scan" to trigger a market scan, "retrain" to retrain the model
+    params: dict = {}      # Optional parameters for the action (currently unused)
 
 
 @app.post("/api/webhook")
@@ -899,7 +1180,12 @@ async def get_notification_config():
 
 @app.get("/api/export/trades")
 async def export_trades_csv(source: str = "paper"):
-    """Export trade history as CSV download."""
+    """Export trade history as a CSV file download.
+
+    Generates a CSV with all trade fields (ticker, side, entry/exit prices,
+    P&L, log return, MAE/MFE, etc.) and returns it as a streaming response
+    with a Content-Disposition header for browser download.
+    """
     trades = []
     if source == "paper" and paper_trader:
         trades = paper_trader.tracker.get_trade_history()
@@ -935,7 +1221,11 @@ async def get_performance_by_category(source: str = "paper"):
 
 @app.get("/api/portfolio/heatmap")
 async def get_portfolio_heatmap():
-    """Get portfolio positions grouped by category for heatmap visualization."""
+    """Get portfolio positions grouped by category for heatmap visualization.
+
+    Returns paper trading positions organized by market category (politics, crypto,
+    sports, etc.) with position count and value data for the frontend heatmap chart.
+    """
     if not paper_trader:
         return {"categories": {}}
 
@@ -961,7 +1251,8 @@ async def get_portfolio_heatmap():
 # ── Trade Notes ───────────────────────────────────────────────────────────
 
 class TradeNotesRequest(BaseModel):
-    notes: str
+    """Request body for PATCH /api/trade/{index}/notes (trade journal annotation)."""
+    notes: str  # Free-text notes to attach to a specific trade
 
 
 @app.patch("/api/trade/{trade_index}/notes")
@@ -984,8 +1275,9 @@ async def update_trade_notes(trade_index: int, req: TradeNotesRequest, source: s
 # ── Retrain Schedule ──────────────────────────────────────────────────────
 
 class RetrainScheduleRequest(BaseModel):
-    days: str = "mon,wed,fri"
-    hour: int = 3
+    """Request body for POST /api/retrain/schedule (update cron schedule)."""
+    days: str = "mon,wed,fri"  # Comma-separated day abbreviations for APScheduler CronTrigger
+    hour: int = 3              # Hour (UTC) to run the retrain job
 
 
 @app.get("/api/retrain/schedule")

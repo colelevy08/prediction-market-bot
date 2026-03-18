@@ -56,10 +56,62 @@ body {
 /* Glow effects */
 .glow-green { box-shadow: 0 0 20px rgba(0, 255, 135, 0.15); }
 .glow-red { box-shadow: 0 0 20px rgba(255, 59, 59, 0.15); }
+.glow-blue { box-shadow: 0 0 20px rgba(59, 130, 246, 0.15); }
+.glow-purple { box-shadow: 0 0 20px rgba(168, 85, 247, 0.15); }
 
 /* Card hover */
 .card-hover { transition: all 0.2s ease; }
 .card-hover:hover { border-color: #333; background: var(--color-card-hover); }
+
+/* Colored left border accents for stat cards */
+.border-l-green { border-left: 3px solid #00ff87; }
+.border-l-red { border-left: 3px solid #ff3b3b; }
+.border-l-yellow { border-left: 3px solid #ffb800; }
+.border-l-blue { border-left: 3px solid #3b82f6; }
+.border-l-purple { border-left: 3px solid #a855f7; }
+.border-l-cyan { border-left: 3px solid #22d3ee; }
+.border-l-white { border-left: 3px solid #ffffff; }
+
+/* Progress bar for win rate / confidence */
+.progress-bar {
+  height: 3px;
+  border-radius: 2px;
+  background: #1a1a1a;
+  margin-top: 6px;
+  overflow: hidden;
+}
+.progress-bar .fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.6s ease;
+}
+
+/* Subtle row tint for trade tables */
+.row-win { background: rgba(0, 255, 135, 0.03); }
+.row-loss { background: rgba(255, 59, 59, 0.03); }
+.row-win:hover { background: rgba(0, 255, 135, 0.07) !important; }
+.row-loss:hover { background: rgba(255, 59, 59, 0.07) !important; }
+
+/* Pulsing glow for active indicators */
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(0, 255, 135, 0.3); }
+  50% { box-shadow: 0 0 16px rgba(0, 255, 135, 0.6); }
+}
+.glow-pulse { animation: glow-pulse 2s ease-in-out infinite; }
+
+/* Gradient text for key metrics */
+.gradient-text-green {
+  background: linear-gradient(135deg, #00ff87, #22d3ee);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.gradient-text-red {
+  background: linear-gradient(135deg, #ff3b3b, #ffb800);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
 
 /* Light theme overrides for colored text */
 .light .text-white { color: var(--color-text-primary); }
