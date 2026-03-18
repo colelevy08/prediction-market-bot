@@ -100,7 +100,7 @@ export default function App() {
                 status?.supabase_connected && { label: 'DB', ok: true },
               ].filter(Boolean).map((item, i) => (
                 <div key={i} className="flex items-center gap-1.5">
-                  <span className={`w-1.5 h-1.5 rounded-full ${item.ok ? 'bg-accent-green pulse-dot' : 'bg-text-muted'}`} />
+                  <span className={`w-1.5 h-1.5 rounded-full ${item.ok ? 'bg-accent-green pulse-dot' : 'bg-accent-red'}`} />
                   <span className={`text-[10px] font-medium tracking-wide ${item.ok ? 'text-text-secondary' : 'text-text-muted'}`}>
                     {item.label}
                   </span>
@@ -188,7 +188,7 @@ export default function App() {
                   { label: 'RF', ok: status?.model?.is_trained },
                 ].map((item, i) => (
                   <span key={i} className="flex items-center gap-1">
-                    <span className={`w-1.5 h-1.5 rounded-full ${item.ok ? 'bg-accent-green' : 'bg-text-muted'}`} />
+                    <span className={`w-1.5 h-1.5 rounded-full ${item.ok ? 'bg-accent-green' : 'bg-accent-red'}`} />
                     {item.label}
                   </span>
                 ))}
