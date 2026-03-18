@@ -36,19 +36,38 @@ function StatCard({ label, tooltip, value, sub, color = 'text-text-primary', acc
 
 const BET_AMOUNTS = [10, 25, 50, 100, 250, 500];
 
+function formatRelativeTime(date) {
+  if (!date) return '';
+  const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (seconds < 60) return 'Updated just now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `Updated ${minutes}m ago`;
+  return `Updated at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+}
+
 export default function Dashboard({ status, scanResult, onScan, scanning }) {
   const [portfolio, setPortfolio] = useState(null);
   const [perf, setPerf] = useState(null);
   const [features, setFeatures] = useState(null);
   const [signals, setSignals] = useState([]);
   const [betAmount, setBetAmount] = useState(100);
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [, setTick] = useState(0);
 
   const fetchAll = () => {
-    api.getPortfolio().then(setPortfolio).catch(() => {});
-    api.getPerformance().then(setPerf).catch(() => {});
-    api.getFeatureImportance().then(setFeatures).catch(() => {});
-    api.getSignals().then(data => setSignals(data.signals || [])).catch(() => {});
+    Promise.all([
+      api.getPortfolio().then(setPortfolio),
+      api.getPerformance().then(setPerf),
+      api.getFeatureImportance().then(setFeatures),
+      api.getSignals().then(data => setSignals(data.signals || [])),
+    ]).then(() => setLastUpdated(new Date())).catch(() => {});
   };
+
+  // Tick every 15s to keep relative timestamp fresh
+  useEffect(() => {
+    const timer = setInterval(() => setTick(t => t + 1), 15000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     fetchAll();
@@ -78,6 +97,9 @@ export default function Dashboard({ status, scanResult, onScan, scanning }) {
 
   return (
     <div className="space-y-5 animate-fade-in">
+      {lastUpdated && (
+        <div className="text-[10px] text-text-muted text-right">{formatRelativeTime(lastUpdated)}</div>
+      )}
       {/* Strategy overview */}
       <div className="card p-5">
         <h2 className="section-title mb-4">Strategy Overview</h2>

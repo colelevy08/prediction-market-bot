@@ -245,10 +245,30 @@ export default function Performance() {
           <div className="card overflow-hidden">
             <div className="px-5 py-3 border-b border-border flex items-center justify-between">
               <h3 className="section-title">Trade History ({trades.length})</h3>
-              <button onClick={() => api.exportTradesCsv('paper')}
-                className="btn-secondary !px-3 !py-1.5 !text-[10px] uppercase tracking-widest">
-                Export CSV
-              </button>
+              <div className="flex gap-2">
+                <button onClick={async () => {
+                  try {
+                    const res = await fetch(`${(import.meta.env.VITE_API_URL || '')}/api/export/trades?source=live`);
+                    if (!res.ok) throw new Error('Export failed');
+                    const blob = await res.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `trades_live_${new Date().toISOString().slice(0, 10)}.csv`;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    URL.revokeObjectURL(url);
+                  } catch (e) { toast.error('Failed to export CSV'); }
+                }}
+                  className="btn-ghost !px-3 !py-1.5 !text-[10px] uppercase tracking-widest">
+                  Export CSV
+                </button>
+                <button onClick={() => api.exportTradesCsv('paper')}
+                  className="btn-secondary !px-3 !py-1.5 !text-[10px] uppercase tracking-widest">
+                  Export Paper CSV
+                </button>
+              </div>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs">

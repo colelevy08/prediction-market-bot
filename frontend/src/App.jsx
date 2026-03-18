@@ -35,6 +35,20 @@ export default function App() {
     localStorage.setItem('theme', theme);
   }, [theme]);
 
+  // Keyboard shortcuts: keys 1-7 switch tabs
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      const tag = e.target.tagName.toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+      const num = parseInt(e.key, 10);
+      if (num >= 1 && num <= TABS.length) {
+        setTab(TABS[num - 1].id);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   const fetchStatus = useCallback(async () => {
     try {
       const data = await api.getStatus();

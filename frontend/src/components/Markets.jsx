@@ -161,6 +161,7 @@ export default function Markets() {
   const [limit, setLimit] = useState(20);
   const [sortBy, setSortBy] = useState('volume');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
 
   const loadEvents = async () => {
     setLoading(true);
@@ -176,6 +177,11 @@ export default function Markets() {
   const allMarkets = events.flatMap(e =>
     (e.markets || []).map(m => ({ ...m, event_title: e.title }))
   ).filter(m => statusFilter === 'all' || m.status === statusFilter)
+   .filter(m => {
+     if (!searchQuery) return true;
+     const q = searchQuery.toLowerCase();
+     return (m.ticker || '').toLowerCase().includes(q) || (m.title || '').toLowerCase().includes(q);
+   })
    .sort(sortFn);
 
   const statuses = [...new Set(events.flatMap(e => (e.markets || []).map(m => m.status)).filter(Boolean))];
@@ -202,6 +208,14 @@ export default function Markets() {
                 }`}>{s}</button>
             ))}
           </div>
+          {/* Search */}
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder="Search markets..."
+            className="input w-auto py-1.5 text-xs"
+          />
           {/* Sort */}
           <select value={sortBy} onChange={e => setSortBy(e.target.value)}
             className="input w-auto py-1.5 text-xs">
