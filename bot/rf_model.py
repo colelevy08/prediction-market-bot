@@ -450,7 +450,7 @@ class RFSignalGenerator:
     """
 
     def __init__(self):
-        self.model = PredictionModel(n_estimators=200)
+        self.model = PredictionModel(n_estimators=500)
         self.trade_log: list[dict] = []
         self.history_cache: dict[str, list[dict]] = {}
 

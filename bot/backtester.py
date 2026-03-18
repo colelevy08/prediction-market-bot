@@ -219,7 +219,7 @@ class Backtester:
 
     def __init__(self, kalshi: KalshiClient | None = None):
         self.kalshi = kalshi
-        self.model = PredictionModel(n_estimators=200)
+        self.model = PredictionModel(n_estimators=500)
         self.tracker = PerformanceTracker()
 
     def run(
@@ -385,7 +385,7 @@ class Backtester:
                     min_confidence=conf,
                 )
                 # Reset model for each run
-                self.model = PredictionModel(n_estimators=200)
+                self.model = PredictionModel(n_estimators=500)
                 result = self.run(settled_data, cfg)
                 results.append(result)
 
