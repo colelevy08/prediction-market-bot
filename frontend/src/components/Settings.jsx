@@ -46,6 +46,7 @@
  */
 import { useState, useEffect } from 'react';
 import { api } from '../api';
+import Tooltip from './Tooltip';
 
 export default function Settings({ status, onRefresh }) {
   const [config, setConfig] = useState({
@@ -70,6 +71,7 @@ export default function Settings({ status, onRefresh }) {
   const [shadowLog, setShadowLog] = useState(null);
   const [liveLog, setLiveLog] = useState(null);
   const [logTab, setLogTab] = useState('shadow');
+  const [copiedStep, setCopiedStep] = useState(null);
 
   useEffect(() => {
     Promise.all([
@@ -124,518 +126,580 @@ export default function Settings({ status, onRefresh }) {
     } catch (e) { alert(`Save failed: ${e.message}`); }
   };
 
+  const copyToClipboard = (text, stepIndex) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedStep(stepIndex);
+      setTimeout(() => setCopiedStep(null), 2000);
+    }).catch(() => {});
+  };
+
   const pt = status?.paper_trader;
 
+  const connectionDot = (ok, optional) => {
+    if (ok) return <span className="w-2.5 h-2.5 rounded-full bg-accent-green pulse-dot inline-block" />;
+    if (optional) return <span className="w-2.5 h-2.5 rounded-full bg-accent-yellow inline-block" />;
+    return <span className="w-2.5 h-2.5 rounded-full bg-accent-red inline-block" />;
+  };
+
   return (
-    <div className="space-y-6 max-w-2xl">
-      {/* Connection status */}
-      <div className="bg-card border border-border rounded-lg p-5">
-        <h3 className="text-[10px] uppercase tracking-widest text-text-secondary font-semibold mb-4">Connections</h3>
-        <div className="space-y-3">
-          {[
-            { label: 'Kalshi API', ok: status?.kalshi_connected },
-            { label: 'Claude AI', ok: status?.anthropic_connected, optional: true },
-            { label: 'Supabase DB', ok: status?.supabase_connected, optional: true },
-            { label: 'Environment', value: status?.environment?.toUpperCase(), warn: status?.environment !== 'demo' },
-            { label: 'RF Model', value: `${status?.model?.n_features || 0} features, ${status?.model?.n_estimators || 0} trees${status?.model?.is_trained ? '' : ' (heuristic)'}` },
-          ].map((item, i) => (
-            <div key={i} className="flex items-center justify-between">
-              <span className="text-xs">{item.label}</span>
-              {item.value ? (
-                <span className={`text-[10px] px-2.5 py-1 rounded font-semibold uppercase tracking-wide ${
-                  item.warn ? 'bg-accent-red/10 text-accent-red' : 'bg-white/5 text-text-secondary'
-                }`}>{item.value}</span>
-              ) : (
-                <span className={`text-[10px] px-2.5 py-1 rounded font-semibold uppercase tracking-wide ${
-                  item.ok ? 'bg-accent-green/10 text-accent-green' : item.optional ? 'bg-white/5 text-text-muted' : 'bg-accent-red/10 text-accent-red'
-                }`}>{item.ok ? 'Connected' : item.optional ? 'Not Configured' : 'Disconnected'}</span>
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 w-full">
+      {/* ════════ LEFT COLUMN ════════ */}
+      <div className="space-y-6">
+        {/* Connection status */}
+        <div className="card p-5">
+          <h3 className="section-title mb-4">Connections</h3>
+          <div className="flex flex-wrap gap-4">
+            {[
+              { label: 'Kalshi API', ok: status?.kalshi_connected },
+              { label: 'Claude AI', ok: status?.anthropic_connected, optional: true },
+              { label: 'Supabase DB', ok: status?.supabase_connected, optional: true },
+            ].map((item, i) => (
+              <div key={i} className="flex items-center gap-2">
+                {connectionDot(item.ok, item.optional)}
+                <span className="text-xs text-text-secondary">{item.label}</span>
+              </div>
+            ))}
+            <div className="flex items-center gap-2">
+              <span className={`w-2.5 h-2.5 rounded-full inline-block ${status?.environment !== 'demo' ? 'bg-accent-red' : 'bg-accent-green'}`} />
+              <span className="text-xs text-text-secondary">Env:</span>
+              <span className={`badge ${status?.environment !== 'demo' ? 'badge-red' : 'badge-muted'}`}>
+                {status?.environment?.toUpperCase()}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-accent-purple inline-block" />
+              <span className="text-xs text-text-secondary">RF Model:</span>
+              <span className="badge badge-purple">
+                {status?.model?.n_features || 0}f / {status?.model?.n_estimators || 0}t{status?.model?.is_trained ? '' : ' (heuristic)'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Trading Parameters */}
+        <div className="card p-5">
+          <h3 className="section-title mb-4">Trading Parameters</h3>
+          <div className="space-y-4">
+            {[
+              { label: 'Max Bet ($)', key: 'max_bet_amount_cents', div: 100, step: 1, min: 1, tooltip: 'Maximum dollar amount the bot can wager on a single trade' },
+              { label: 'Min Edge (%)', key: 'min_edge_threshold', div: 0.01, step: 0.5, min: 0, max: 50, tooltip: 'Minimum percentage difference between model probability and market price required to enter a trade' },
+              { label: 'Daily Loss Limit ($)', key: 'max_daily_loss_cents', div: 100, step: 10, min: 10, tooltip: 'Bot stops trading for the day once cumulative losses hit this amount' },
+              { label: 'Max Positions', key: 'max_open_positions', div: 1, step: 1, min: 1, max: 50, tooltip: 'Maximum number of simultaneously open positions allowed' },
+              { label: 'Markets to Scan', key: 'max_events_to_analyze', div: 1, step: 5, min: 5, max: 200, tooltip: 'Number of top events (by volume) fetched from Kalshi each scan cycle' },
+              { label: 'Kelly Fraction', key: 'kelly_fraction', div: 1, step: 0.05, min: 0.1, max: 1.0, tooltip: 'Fraction of the Kelly Criterion used for position sizing. 0.5 = Half-Kelly (safer), 1.0 = Full Kelly (aggressive)' },
+            ].map(f => (
+              <div key={f.key}>
+                <label className="text-[10px] uppercase tracking-widest text-text-secondary block mb-1">
+                  <Tooltip text={f.tooltip}>
+                    <span>{f.label}</span>
+                    <span className="text-text-muted text-[9px] ml-1">(?)</span>
+                  </Tooltip>
+                </label>
+                <input type="number" step={f.step} min={f.min} max={f.max}
+                  value={f.div === 1 ? config[f.key] : (config[f.key] / f.div).toFixed(f.div === 100 ? 2 : 1)}
+                  onChange={e => {
+                    const val = parseFloat(e.target.value);
+                    if (!isNaN(val)) {
+                      setConfig(prev => ({ ...prev, [f.key]: f.div === 1 ? val : Math.round(val * f.div) }));
+                    }
+                  }}
+                  className="input" />
+              </div>
+            ))}
+            <div className="flex gap-2">
+              <button onClick={handleSave} className="btn-primary flex-1">
+                {saved ? 'Saved!' : 'Save Settings'}
+              </button>
+              <button onClick={async () => {
+                try {
+                  await api.resetDailyPnl();
+                  alert('Daily P&L counter reset');
+                } catch (e) { alert(`Reset failed: ${e.message}`); }
+              }}
+                className="btn-danger">
+                Reset Daily P&L
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Notifications */}
+        <div className="card p-5">
+          <h3 className="section-title mb-4">Notifications</h3>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs">Slack</span>
+              <div className="flex items-center gap-2">
+                {connectionDot(notifConfig.slack_configured, !notifConfig.slack_configured)}
+                <span className="text-[10px] text-text-secondary">{notifConfig.slack_configured ? 'Configured' : 'Not Set'}</span>
+              </div>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs">Discord</span>
+              <div className="flex items-center gap-2">
+                {connectionDot(notifConfig.discord_configured, !notifConfig.discord_configured)}
+                <span className="text-[10px] text-text-secondary">{notifConfig.discord_configured ? 'Configured' : 'Not Set'}</span>
+              </div>
+            </div>
+            <p className="text-[10px] text-text-muted">
+              Set <code className="text-accent-green bg-surface-2 px-1 py-0.5 rounded">SLACK_WEBHOOK_URL</code> and/or{' '}
+              <code className="text-accent-green bg-surface-2 px-1 py-0.5 rounded">DISCORD_WEBHOOK_URL</code> in .env to enable notifications for trade entries, exits, and retrains.
+            </p>
+            <div className="flex gap-2">
+              <button onClick={async () => {
+                try {
+                  const r = await api.testNotifications();
+                  setNotifTestResult(r.status === 'sent' ? `Test sent to ${r.channels?.join(', ') || 'channels'}!` : 'Not configured -- set webhook URLs in .env');
+                  setTimeout(() => setNotifTestResult(''), 4000);
+                } catch (e) { setNotifTestResult('Failed to send'); setTimeout(() => setNotifTestResult(''), 3000); }
+              }}
+                className="btn-ghost">
+                Test Notifications
+              </button>
+              {notifTestResult && (
+                <span className={`text-[10px] self-center ${notifTestResult.includes('sent') ? 'text-accent-green' : 'text-accent-yellow'}`}>
+                  {notifTestResult}
+                </span>
               )}
             </div>
-          ))}
+          </div>
         </div>
-      </div>
 
-      {/* Paper Trader Status */}
-      {pt && (
-        <div className="bg-card border border-border rounded-lg p-5">
-          <h3 className="text-[10px] uppercase tracking-widest text-text-secondary font-semibold mb-4">Paper Trader Status</h3>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        {/* Setup */}
+        <div className="card p-5">
+          <h3 className="section-title mb-3">Setup</h3>
+          <div className="space-y-2.5 text-xs text-text-secondary">
             {[
-              { label: 'Balance', value: `$${(pt.balance_cents / 100).toFixed(2)}`, color: 'text-accent-green', border: 'border-l-green', icon: '💰' },
-              { label: 'Model', value: pt.model_trained ? 'Trained' : 'Heuristic', color: pt.model_trained ? 'text-accent-green' : 'text-accent-yellow', border: pt.model_trained ? 'border-l-green' : 'border-l-yellow', icon: '🧠' },
-              { label: 'Training Samples', value: pt.training_samples?.toLocaleString() || '0', border: 'border-l-purple', icon: '📚' },
-              { label: 'Open Positions', value: pt.open_positions, color: pt.open_positions > 0 ? 'text-accent-blue' : 'text-white', border: 'border-l-blue', icon: '📊' },
-              { label: 'Total Scans', value: pt.total_scans, border: 'border-l-cyan', icon: '🔍' },
-              { label: 'Auto-Scan', value: status?.auto_scan_enabled ? 'Active' : 'Off', color: status?.auto_scan_enabled ? 'text-accent-green' : 'text-text-muted', border: status?.auto_scan_enabled ? 'border-l-green' : '', icon: status?.auto_scan_enabled ? '🟢' : '⏸️' },
-            ].map((item, i) => (
-              <div key={i} className={`bg-surface border border-border rounded-lg p-3 ${item.border || ''}`}>
-                <div className="flex items-center justify-between mb-1">
-                  <div className="text-[10px] uppercase tracking-widest text-text-muted">{item.label}</div>
-                  {item.icon && <span className="text-xs opacity-40">{item.icon}</span>}
+              { text: 'Copy .env.example to .env', code: 'cp .env.example .env' },
+              { text: 'Add Kalshi API key + private key from demo.kalshi.co', code: null },
+              { text: 'Add Anthropic API key (optional, for AI+RF hybrid analysis)', code: null },
+              { text: 'Add Supabase URL + key (optional, for persistent trade history)', code: null },
+              { text: 'Add Slack/Discord webhook URLs (optional, for trade notifications)', code: null },
+              { text: 'Backend:', code: 'uvicorn bot.server:app --reload --port 8000' },
+              { text: 'Frontend:', code: 'cd frontend && npm run dev' },
+            ].map((step, i) => (
+              <div key={i} className="flex items-start gap-2">
+                <span className="text-accent-green font-mono font-semibold shrink-0">{i + 1}.</span>
+                <div className="flex-1 min-w-0">
+                  <span>{step.text}</span>
+                  {step.code && (
+                    <div className="mt-1 flex items-center gap-1">
+                      <code className="text-accent-green bg-surface-2 border border-border px-2 py-1 rounded font-mono text-[11px] block flex-1 overflow-x-auto">
+                        {step.code}
+                      </code>
+                      <button
+                        onClick={() => copyToClipboard(step.code, i)}
+                        className="btn-ghost shrink-0 px-2 py-1 text-[9px]"
+                      >
+                        {copiedStep === i ? 'Copied!' : 'Copy'}
+                      </button>
+                    </div>
+                  )}
                 </div>
-                <div className={`text-lg font-bold font-mono ${item.color || 'text-white'}`}>{item.value}</div>
               </div>
             ))}
           </div>
         </div>
-      )}
-
-      {/* Trading Parameters */}
-      <div className="bg-card border border-border rounded-lg p-5">
-        <h3 className="text-[10px] uppercase tracking-widest text-text-secondary font-semibold mb-4">Trading Parameters</h3>
-        <div className="space-y-4">
-          {[
-            { label: 'Max Bet ($)', key: 'max_bet_amount_cents', div: 100, step: 1, min: 1, note: 'Maximum per-trade wager' },
-            { label: 'Min Edge (%)', key: 'min_edge_threshold', div: 0.01, step: 0.5, min: 0, max: 50, note: 'Minimum model vs market edge to enter' },
-            { label: 'Daily Loss Limit ($)', key: 'max_daily_loss_cents', div: 100, step: 10, min: 10, note: 'Stops trading when daily losses exceed this' },
-            { label: 'Max Positions', key: 'max_open_positions', div: 1, step: 1, min: 1, max: 50, note: 'Maximum simultaneous open positions' },
-            { label: 'Markets to Scan', key: 'max_events_to_analyze', div: 1, step: 5, min: 5, max: 200, note: 'Number of events fetched per scan cycle' },
-            { label: 'Kelly Fraction', key: 'kelly_fraction', div: 1, step: 0.05, min: 0.1, max: 1.0, note: 'Position sizing (0.5 = Half-Kelly, safer)' },
-          ].map(f => (
-            <div key={f.key}>
-              <label className="text-[10px] uppercase tracking-widest text-text-secondary block mb-1">
-                {f.label}
-                {f.note && <span className="normal-case tracking-normal text-text-muted ml-2">-- {f.note}</span>}
-              </label>
-              <input type="number" step={f.step} min={f.min} max={f.max}
-                value={f.div === 1 ? config[f.key] : (config[f.key] / f.div).toFixed(f.div === 100 ? 2 : 1)}
-                onChange={e => {
-                  const val = parseFloat(e.target.value);
-                  if (!isNaN(val)) {
-                    setConfig(prev => ({ ...prev, [f.key]: f.div === 1 ? val : Math.round(val * f.div) }));
-                  }
-                }}
-                className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm font-mono text-white focus:border-accent-green focus:outline-none transition-colors" />
-            </div>
-          ))}
-          <div className="flex gap-2">
-            <button onClick={handleSave}
-              className="flex-1 py-2.5 bg-white text-black text-xs font-semibold tracking-wide rounded-lg hover:bg-gray-200 transition-all uppercase">
-              {saved ? 'Saved!' : 'Save Settings'}
-            </button>
-            <button onClick={async () => {
-              try {
-                await api.resetDailyPnl();
-                alert('Daily P&L counter reset');
-              } catch (e) { alert(`Reset failed: ${e.message}`); }
-            }}
-              className="px-4 py-2.5 bg-accent-yellow/10 border border-accent-yellow/20 text-accent-yellow text-xs font-semibold tracking-wide rounded-lg hover:bg-accent-yellow/20 transition-all uppercase">
-              Reset Daily P&L
-            </button>
-          </div>
-        </div>
       </div>
 
-      {/* Auto-Scan / Auto-Trade */}
-      <div className="bg-card border border-border rounded-lg p-5">
-        <h3 className="text-[10px] uppercase tracking-widest text-text-secondary font-semibold mb-4">24/7 Automation</h3>
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <span className="text-xs font-semibold">Auto-Scan (Paper)</span>
-              <p className="text-[10px] text-text-muted mt-0.5">Scans markets and records shadow trades automatically</p>
+      {/* ════════ RIGHT COLUMN ════════ */}
+      <div className="space-y-6">
+        {/* Paper Trader Status */}
+        {pt && (
+          <div className="card p-5">
+            <h3 className="section-title mb-4">Paper Trader Status</h3>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              {[
+                { label: 'Balance', value: `$${(pt.balance_cents / 100).toFixed(2)}`, color: 'text-accent-green', accent: 'rgb(var(--color-green))' },
+                { label: 'Model', value: pt.model_trained ? 'Trained' : 'Heuristic', color: pt.model_trained ? 'text-accent-green' : 'text-accent-yellow', accent: pt.model_trained ? 'rgb(var(--color-green))' : 'rgb(var(--color-yellow))' },
+                { label: 'Training Samples', value: pt.training_samples?.toLocaleString() || '0', accent: 'rgb(var(--color-purple))' },
+                { label: 'Open Positions', value: pt.open_positions, color: pt.open_positions > 0 ? 'text-accent-blue' : 'text-text-primary', accent: 'rgb(var(--color-blue))' },
+                { label: 'Total Scans', value: pt.total_scans, accent: 'rgb(var(--color-cyan))' },
+                { label: 'Auto-Scan', value: status?.auto_scan_enabled ? 'Active' : 'Off', color: status?.auto_scan_enabled ? 'text-accent-green' : 'text-text-muted', accent: status?.auto_scan_enabled ? 'rgb(var(--color-green))' : 'rgb(var(--color-text-muted))' },
+              ].map((item, i) => (
+                <div key={i} className="stat-card" style={{ '--accent-color': item.accent }}>
+                  <div className="text-[10px] uppercase tracking-widest text-text-muted mb-1">{item.label}</div>
+                  <div className={`text-lg font-bold font-mono ${item.color || 'text-text-primary'}`}>{item.value}</div>
+                </div>
+              ))}
             </div>
-            <button
-              onClick={async () => {
-                try {
-                  const next = !autoScan;
-                  await api.toggleAutoScan(next, scanInterval);
-                  setAutoScan(next);
-                } catch (e) { alert(`Toggle failed: ${e.message}`); }
-              }}
-              className={`text-[10px] px-3 py-1.5 rounded font-semibold uppercase tracking-wide transition-all ${
-                autoScan ? 'bg-accent-green/10 text-accent-green' : 'bg-white/5 text-text-muted hover:bg-white/10'
-              }`}
-            >
-              {autoScan ? 'Running' : 'Off'}
-            </button>
           </div>
+        )}
 
-          <div>
-            <label className="text-[10px] uppercase tracking-widest text-text-secondary block mb-1">
-              Scan Interval (seconds)
-              <span className="normal-case tracking-normal text-text-muted ml-2">-- scans ALL of Kalshi (~5000+ events, ~40000 markets). Min 30s recommended.</span>
-            </label>
-            <input type="number" min={30} max={600} step={10} value={scanInterval}
-              onChange={e => setScanInterval(Math.max(30, parseInt(e.target.value) || 60))}
-              className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm font-mono text-white focus:border-accent-green focus:outline-none transition-colors" />
-          </div>
-
-          <div className="flex items-center justify-between pt-2 border-t border-border">
-            <div>
-              <span className="text-xs font-semibold">Auto-Trade (Live)</span>
-              <p className="text-[10px] text-accent-red mt-0.5">Executes real trades on Kalshi -- use with caution</p>
+        {/* Auto-Scan / Auto-Trade */}
+        <div className="card p-5">
+          <h3 className="section-title mb-4">24/7 Automation</h3>
+          <div className="space-y-4">
+            {/* Auto-Scan toggle */}
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-xs font-semibold">Auto-Scan (Paper)</span>
+                <p className="text-[10px] text-text-muted mt-0.5">Scans markets and records shadow trades automatically</p>
+              </div>
+              <button
+                onClick={async () => {
+                  try {
+                    const next = !autoScan;
+                    await api.toggleAutoScan(next, scanInterval);
+                    setAutoScan(next);
+                  } catch (e) { alert(`Toggle failed: ${e.message}`); }
+                }}
+                className={`relative w-12 h-6 rounded-full transition-colors duration-200 focus:outline-none ${
+                  autoScan ? 'bg-accent-green' : 'bg-text-muted/30'
+                }`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${
+                  autoScan ? 'translate-x-6' : 'translate-x-0'
+                }`} />
+              </button>
             </div>
-            <button
-              onClick={async () => {
-                if (!autoTrade && !confirm('This will place REAL trades on Kalshi. Continue?')) return;
-                try {
-                  const next = !autoTrade;
-                  await api.toggleAutoTrade(next);
-                  setAutoTrade(next);
-                } catch (e) { alert(`Toggle failed: ${e.message}`); }
-              }}
-              className={`text-[10px] px-3 py-1.5 rounded font-semibold uppercase tracking-wide transition-all ${
-                autoTrade ? 'bg-accent-red/10 text-accent-red' : 'bg-white/5 text-text-muted hover:bg-white/10'
-              }`}
-            >
-              {autoTrade ? 'Live' : 'Off'}
-            </button>
-          </div>
 
-          {scanLog.length > 0 && (
-            <div className="mt-3">
-              <h4 className="text-[10px] uppercase tracking-widest text-text-muted mb-2">Recent Scans ({scanLog.length})</h4>
-              <div className="space-y-1 max-h-48 overflow-y-auto">
-                {scanLog.slice().reverse().map((entry, i) => (
-                  <div key={i} className="text-[10px] font-mono text-text-secondary bg-surface rounded px-2 py-1.5 flex justify-between items-center gap-2">
-                    <span className="shrink-0">{entry.time ? new Date(entry.time).toLocaleTimeString() : '--'}</span>
-                    <span className="text-text-muted shrink-0">
-                      {entry.events_scanned ? `${entry.events_scanned.toLocaleString()} events` : ''}
-                      {entry.markets_scanned ? ` / ${entry.markets_scanned.toLocaleString()} mkts` : ''}
-                    </span>
-                    <span className={entry.type === 'live' ? 'text-accent-red' : 'text-accent-green'}>
-                      {entry.type === 'live'
-                        ? `${entry.signals || 0} signals, ${entry.exits || 0} exits`
-                        : `+${entry.entries || 0} / -${entry.exits || 0} / ${entry.open_positions ?? 0} open`
-                      }
-                    </span>
-                  </div>
+            {/* Scan Interval */}
+            <div>
+              <label className="text-[10px] uppercase tracking-widest text-text-secondary block mb-1">
+                <Tooltip text="Seconds between each automatic full-Kalshi scan cycle. Must be >=30s to avoid rate limits">
+                  <span>Scan Interval (seconds)</span>
+                  <span className="text-text-muted text-[9px] ml-1">(?)</span>
+                </Tooltip>
+              </label>
+              <input type="number" min={30} max={600} step={10} value={scanInterval}
+                onChange={e => setScanInterval(Math.max(30, parseInt(e.target.value) || 60))}
+                className="input" />
+            </div>
+
+            {/* Auto-Trade toggle */}
+            <div className="flex items-center justify-between pt-2 border-t border-border">
+              <div>
+                <span className="text-xs font-semibold">Auto-Trade (Live)</span>
+                <p className="text-[10px] text-accent-red mt-0.5">Executes real trades on Kalshi -- use with caution</p>
+              </div>
+              <button
+                onClick={async () => {
+                  if (!autoTrade && !confirm('This will place REAL trades on Kalshi. Continue?')) return;
+                  try {
+                    const next = !autoTrade;
+                    await api.toggleAutoTrade(next);
+                    setAutoTrade(next);
+                  } catch (e) { alert(`Toggle failed: ${e.message}`); }
+                }}
+                className={`relative w-12 h-6 rounded-full transition-colors duration-200 focus:outline-none ${
+                  autoTrade ? 'bg-accent-red' : 'bg-text-muted/30'
+                }`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${
+                  autoTrade ? 'translate-x-6' : 'translate-x-0'
+                }`} />
+              </button>
+            </div>
+
+            {/* Scan Log */}
+            {scanLog.length > 0 && (
+              <div className="mt-3">
+                <h4 className="section-title text-[10px] mb-2">Recent Scans ({scanLog.length})</h4>
+                <div className="space-y-1 max-h-48 overflow-y-auto">
+                  {scanLog.slice().reverse().map((entry, i) => (
+                    <div key={i} className="text-[10px] font-mono text-text-secondary bg-surface-2 rounded px-2 py-1.5 flex justify-between items-center gap-2">
+                      <span className="shrink-0">{entry.time ? new Date(entry.time).toLocaleTimeString() : '--'}</span>
+                      <span className="text-text-muted shrink-0">
+                        {entry.events_scanned ? `${entry.events_scanned.toLocaleString()} events` : ''}
+                        {entry.markets_scanned ? ` / ${entry.markets_scanned.toLocaleString()} mkts` : ''}
+                      </span>
+                      <span className={entry.type === 'live' ? 'text-accent-red' : 'text-accent-green'}>
+                        {entry.type === 'live'
+                          ? `${entry.signals || 0} signals, ${entry.exits || 0} exits`
+                          : `+${entry.entries || 0} / -${entry.exits || 0} / ${entry.open_positions ?? 0} open`
+                        }
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Trade Logs -- Shadow vs Live */}
+        <div className="card p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="section-title">Trade Logs</h3>
+            <div className="flex items-center gap-1">
+              {/* Segmented control tabs */}
+              <div className="flex bg-surface-2 border border-border rounded-lg p-0.5">
+                {[
+                  { id: 'shadow', label: 'Shadow' },
+                  { id: 'live', label: 'Live' },
+                ].map(tab => (
+                  <button key={tab.id} onClick={() => setLogTab(tab.id)}
+                    className={`text-[10px] px-3 py-1 rounded-md font-semibold uppercase tracking-wide transition-all ${
+                      logTab === tab.id
+                        ? tab.id === 'shadow'
+                          ? 'bg-accent-green/15 text-accent-green shadow-sm'
+                          : 'bg-accent-red/15 text-accent-red shadow-sm'
+                        : 'text-text-muted hover:text-text-secondary'
+                    }`}>
+                    {tab.label}
+                    {tab.id === 'shadow' && shadowLog ? ` (${shadowLog.total_shadow_trades})` : ''}
+                    {tab.id === 'live' && liveLog ? ` (${liveLog.total_live_trades})` : ''}
+                  </button>
                 ))}
               </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Trade Logs — Shadow vs Live */}
-      <div className="bg-card border border-border rounded-lg p-5">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-[10px] uppercase tracking-widest text-text-secondary font-semibold">Trade Logs</h3>
-          <div className="flex gap-1">
-            {[
-              { id: 'shadow', label: 'Shadow', color: 'accent-green' },
-              { id: 'live', label: 'Live', color: 'accent-red' },
-            ].map(tab => (
-              <button key={tab.id} onClick={() => setLogTab(tab.id)}
-                className={`text-[10px] px-3 py-1 rounded font-semibold uppercase tracking-wide transition-all ${
-                  logTab === tab.id
-                    ? `bg-${tab.color}/10 text-${tab.color}`
-                    : 'bg-white/5 text-text-muted hover:bg-white/10'
-                }`}>
-                {tab.label}
-                {tab.id === 'shadow' && shadowLog ? ` (${shadowLog.total_shadow_trades})` : ''}
-                {tab.id === 'live' && liveLog ? ` (${liveLog.total_live_trades})` : ''}
+              <button onClick={() => {
+                api.getShadowTradeLog().then(setShadowLog).catch(() => {});
+                api.getLiveTradeLog().then(setLiveLog).catch(() => {});
+              }}
+                className="btn-ghost ml-1">
+                Refresh
               </button>
-            ))}
-            <button onClick={() => {
-              api.getShadowTradeLog().then(setShadowLog).catch(() => {});
-              api.getLiveTradeLog().then(setLiveLog).catch(() => {});
-            }}
-              className="text-[10px] px-2 py-1 rounded bg-white/5 text-text-muted hover:bg-white/10 transition-all ml-1">
-              Refresh
-            </button>
+            </div>
           </div>
-        </div>
 
-        {logTab === 'shadow' && (
-          <div className="space-y-3">
-            {/* Open shadow positions */}
-            {shadowLog?.open_positions?.length > 0 && (
-              <div>
-                <h4 className="text-[10px] uppercase tracking-widest text-accent-green mb-2">
-                  Open Positions ({shadowLog.open_positions.length})
-                </h4>
-                <div className="space-y-1">
-                  {shadowLog.open_positions.map((p, i) => (
-                    <div key={i} className="text-[10px] font-mono bg-surface rounded px-2 py-1.5 flex justify-between items-center">
-                      <span className="text-white">{p.ticker}</span>
-                      <div className="flex items-center gap-3 text-text-secondary">
-                        <span className={p.side === 'yes' ? 'text-accent-green' : 'text-accent-red'}>{p.side?.toUpperCase()}</span>
-                        <span>{p.contracts}x @ {(p.entry_price * 100).toFixed(0)}c</span>
-                        <span>Model: {(p.model_prob * 100).toFixed(0)}%</span>
+          {logTab === 'shadow' && (
+            <div className="space-y-3">
+              {/* Open shadow positions */}
+              {shadowLog?.open_positions?.length > 0 && (
+                <div>
+                  <h4 className="text-[10px] uppercase tracking-widest text-accent-green mb-2">
+                    Open Positions ({shadowLog.open_positions.length})
+                  </h4>
+                  <div className="space-y-1">
+                    {shadowLog.open_positions.map((p, i) => (
+                      <div key={i} className="text-[10px] font-mono bg-surface-2 rounded-lg px-2 py-1.5 flex justify-between items-center table-row">
+                        <span className="text-text-primary">{p.ticker}</span>
+                        <div className="flex items-center gap-3 text-text-secondary">
+                          <span className={p.side === 'yes' ? 'badge badge-green' : 'badge badge-red'}>{p.side?.toUpperCase()}</span>
+                          <span>{p.contracts}x @ {(p.entry_price * 100).toFixed(0)}c</span>
+                          <span>Model: {(p.model_prob * 100).toFixed(0)}%</span>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* Completed shadow trades */}
-            {shadowLog?.completed_trades?.length > 0 ? (
-              <div>
-                <h4 className="text-[10px] uppercase tracking-widest text-text-muted mb-2">
-                  Completed Trades ({shadowLog.completed_trades.length})
-                </h4>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-[10px] font-mono">
-                    <thead>
-                      <tr className="text-text-muted border-b border-border uppercase tracking-widest">
-                        <th className="text-left py-1.5 px-2">Ticker</th>
-                        <th className="text-center py-1.5 px-1">Side</th>
-                        <th className="text-right py-1.5 px-1">Entry</th>
-                        <th className="text-right py-1.5 px-1">Exit</th>
-                        <th className="text-right py-1.5 px-2">P&L</th>
-                        <th className="text-center py-1.5 px-1">Result</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {shadowLog.completed_trades.map((t, i) => (
-                        <tr key={i} className={`border-b border-border/30 ${t.won ? 'row-win' : 'row-loss'}`}>
-                          <td className="py-1 px-2 text-white max-w-[120px] truncate">{t.ticker}</td>
-                          <td className="py-1 px-1 text-center">
-                            <span className={`px-1 py-0.5 rounded text-[9px] font-semibold ${t.side === 'yes' ? 'bg-accent-green/10 text-accent-green' : 'bg-accent-red/10 text-accent-red'}`}>
-                              {t.side?.toUpperCase()}
-                            </span>
-                          </td>
-                          <td className="py-1 px-1 text-right text-text-secondary">{t.entry_price != null ? (t.entry_price * 100).toFixed(0) + 'c' : '--'}</td>
-                          <td className="py-1 px-1 text-right text-text-secondary">{t.exit_price != null ? (t.exit_price * 100).toFixed(0) + 'c' : '--'}</td>
-                          <td className="py-1 px-2 text-right">
-                            <span className={`inline-block px-1 py-0.5 rounded font-semibold ${(t.pnl_cents ?? 0) >= 0 ? 'bg-accent-green/10 text-accent-green' : 'bg-accent-red/10 text-accent-red'}`}>
-                              ${((t.pnl_cents ?? 0) / 100).toFixed(2)}
-                            </span>
-                          </td>
-                          <td className="py-1 px-1 text-center">
-                            <span className={`px-1.5 py-0.5 rounded ${t.won ? 'bg-accent-green/10 text-accent-green' : 'bg-accent-red/10 text-accent-red'}`}>
-                              {t.won ? 'W' : 'L'}
-                            </span>
-                          </td>
+              {/* Completed shadow trades */}
+              {shadowLog?.completed_trades?.length > 0 ? (
+                <div>
+                  <h4 className="text-[10px] uppercase tracking-widest text-text-muted mb-2">
+                    Completed Trades ({shadowLog.completed_trades.length})
+                  </h4>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-[10px] font-mono">
+                      <thead>
+                        <tr className="table-header">
+                          <th className="table-cell text-left py-1.5 px-2">Ticker</th>
+                          <th className="table-cell text-center py-1.5 px-1">Side</th>
+                          <th className="table-cell text-right py-1.5 px-1">Entry</th>
+                          <th className="table-cell text-right py-1.5 px-1">Exit</th>
+                          <th className="table-cell text-right py-1.5 px-2">P&L</th>
+                          <th className="table-cell text-center py-1.5 px-1">Result</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {shadowLog.completed_trades.map((t, i) => (
+                          <tr key={i} className={`table-row ${t.won ? 'row-win' : 'row-loss'}`}>
+                            <td className="table-cell py-1 px-2 text-text-primary max-w-[120px] truncate">{t.ticker}</td>
+                            <td className="table-cell py-1 px-1 text-center">
+                              <span className={`badge ${t.side === 'yes' ? 'badge-green' : 'badge-red'}`}>
+                                {t.side?.toUpperCase()}
+                              </span>
+                            </td>
+                            <td className="table-cell py-1 px-1 text-right text-text-secondary">{t.entry_price != null ? (t.entry_price * 100).toFixed(0) + 'c' : '--'}</td>
+                            <td className="table-cell py-1 px-1 text-right text-text-secondary">{t.exit_price != null ? (t.exit_price * 100).toFixed(0) + 'c' : '--'}</td>
+                            <td className="table-cell py-1 px-2 text-right">
+                              <span className={`badge ${(t.pnl_cents ?? 0) >= 0 ? 'badge-green' : 'badge-red'}`}>
+                                ${((t.pnl_cents ?? 0) / 100).toFixed(2)}
+                              </span>
+                            </td>
+                            <td className="table-cell py-1 px-1 text-center">
+                              <span className={`badge ${t.won ? 'badge-green' : 'badge-red'}`}>
+                                {t.won ? 'W' : 'L'}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div className="text-[10px] text-text-muted text-center py-4">
-                No shadow trades yet. The bot will trade when it finds edges above the {(config.min_edge_threshold * 100 / 0.01 * 0.01).toFixed(0)}% threshold.
-              </div>
-            )}
-
-            {/* Live entry/exit log */}
-            {shadowLog?.live_log?.length > 0 && (
-              <div>
-                <h4 className="text-[10px] uppercase tracking-widest text-text-muted mb-2">Recent Activity</h4>
-                <div className="space-y-1 max-h-32 overflow-y-auto">
-                  {shadowLog.live_log.slice().reverse().map((entry, i) => (
-                    <div key={i} className="text-[10px] font-mono bg-surface rounded px-2 py-1 flex justify-between">
-                      <span className="text-text-secondary">{entry.time ? new Date(entry.time).toLocaleTimeString() : '--'}</span>
-                      <span className={entry.action === 'entry' ? 'text-accent-green' : 'text-accent-yellow'}>
-                        {entry.action?.toUpperCase()} {entry.ticker} {entry.side?.toUpperCase()}
-                        {entry.pnl_cents != null ? ` P&L: $${(entry.pnl_cents / 100).toFixed(2)}` : ''}
-                      </span>
-                    </div>
-                  ))}
+              ) : (
+                <div className="text-[10px] text-text-muted text-center py-4">
+                  No shadow trades yet. The bot will trade when it finds edges above the {(config.min_edge_threshold * 100 / 0.01 * 0.01).toFixed(0)}% threshold.
                 </div>
-              </div>
-            )}
-          </div>
-        )}
+              )}
 
-        {logTab === 'live' && (
-          <div className="space-y-3">
-            {liveLog?.completed_trades?.length > 0 ? (
-              <div>
-                <h4 className="text-[10px] uppercase tracking-widest text-text-muted mb-2">
-                  Completed Live Trades ({liveLog.completed_trades.length})
-                </h4>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-[10px] font-mono">
-                    <thead>
-                      <tr className="text-text-muted border-b border-border uppercase tracking-widest">
-                        <th className="text-left py-1.5 px-2">Ticker</th>
-                        <th className="text-center py-1.5 px-1">Side</th>
-                        <th className="text-right py-1.5 px-1">Entry</th>
-                        <th className="text-right py-1.5 px-1">Exit</th>
-                        <th className="text-right py-1.5 px-2">P&L</th>
-                        <th className="text-center py-1.5 px-1">Result</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {liveLog.completed_trades.map((t, i) => (
-                        <tr key={i} className={`border-b border-border/30 ${t.won ? 'row-win' : 'row-loss'}`}>
-                          <td className="py-1 px-2 text-white max-w-[120px] truncate">{t.ticker}</td>
-                          <td className="py-1 px-1 text-center">
-                            <span className={`px-1 py-0.5 rounded text-[9px] font-semibold ${t.side === 'yes' ? 'bg-accent-green/10 text-accent-green' : 'bg-accent-red/10 text-accent-red'}`}>
-                              {t.side?.toUpperCase()}
-                            </span>
-                          </td>
-                          <td className="py-1 px-1 text-right text-text-secondary">{t.entry_price != null ? (t.entry_price * 100).toFixed(0) + 'c' : '--'}</td>
-                          <td className="py-1 px-1 text-right text-text-secondary">{t.exit_price != null ? (t.exit_price * 100).toFixed(0) + 'c' : '--'}</td>
-                          <td className="py-1 px-2 text-right">
-                            <span className={`inline-block px-1 py-0.5 rounded font-semibold ${(t.pnl_cents ?? 0) >= 0 ? 'bg-accent-green/10 text-accent-green' : 'bg-accent-red/10 text-accent-red'}`}>
-                              ${((t.pnl_cents ?? 0) / 100).toFixed(2)}
-                            </span>
-                          </td>
-                          <td className="py-1 px-1 text-center">
-                            <span className={`px-1.5 py-0.5 rounded ${t.won ? 'bg-accent-green/10 text-accent-green' : 'bg-accent-red/10 text-accent-red'}`}>
-                              {t.won ? 'W' : 'L'}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              {/* Live entry/exit log */}
+              {shadowLog?.live_log?.length > 0 && (
+                <div>
+                  <h4 className="text-[10px] uppercase tracking-widest text-text-muted mb-2">Recent Activity</h4>
+                  <div className="space-y-1 max-h-32 overflow-y-auto">
+                    {shadowLog.live_log.slice().reverse().map((entry, i) => (
+                      <div key={i} className="text-[10px] font-mono bg-surface-2 rounded px-2 py-1 flex justify-between">
+                        <span className="text-text-secondary">{entry.time ? new Date(entry.time).toLocaleTimeString() : '--'}</span>
+                        <span className={entry.action === 'entry' ? 'text-accent-green' : 'text-accent-yellow'}>
+                          {entry.action?.toUpperCase()} {entry.ticker} {entry.side?.toUpperCase()}
+                          {entry.pnl_cents != null ? ` P&L: $${(entry.pnl_cents / 100).toFixed(2)}` : ''}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div className="text-[10px] text-text-muted text-center py-4">
-                No live trades yet. Enable Auto-Trade to execute real orders on Kalshi.
-              </div>
-            )}
-
-            {liveLog?.live_log?.length > 0 && (
-              <div>
-                <h4 className="text-[10px] uppercase tracking-widest text-text-muted mb-2">Recent Live Activity</h4>
-                <div className="space-y-1 max-h-32 overflow-y-auto">
-                  {liveLog.live_log.slice().reverse().map((entry, i) => (
-                    <div key={i} className="text-[10px] font-mono bg-surface rounded px-2 py-1 flex justify-between">
-                      <span className="text-text-secondary">{entry.time ? new Date(entry.time).toLocaleTimeString() : '--'}</span>
-                      <span className="text-accent-red">
-                        {entry.action?.toUpperCase()} {entry.ticker} {entry.side?.toUpperCase()}
-                        {entry.edge ? ` edge: ${(entry.edge * 100).toFixed(1)}%` : ''}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Notifications */}
-      <div className="bg-card border border-border rounded-lg p-5">
-        <h3 className="text-[10px] uppercase tracking-widest text-text-secondary font-semibold mb-4">Notifications</h3>
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-xs">Slack</span>
-            <span className={`text-[10px] px-2.5 py-1 rounded font-semibold uppercase tracking-wide ${
-              notifConfig.slack_configured ? 'bg-accent-green/10 text-accent-green' : 'bg-white/5 text-text-muted'
-            }`}>{notifConfig.slack_configured ? 'Configured' : 'Not Set'}</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-xs">Discord</span>
-            <span className={`text-[10px] px-2.5 py-1 rounded font-semibold uppercase tracking-wide ${
-              notifConfig.discord_configured ? 'bg-accent-green/10 text-accent-green' : 'bg-white/5 text-text-muted'
-            }`}>{notifConfig.discord_configured ? 'Configured' : 'Not Set'}</span>
-          </div>
-          <p className="text-[10px] text-text-muted">
-            Set <code className="text-accent-green bg-surface px-1 py-0.5 rounded">SLACK_WEBHOOK_URL</code> and/or{' '}
-            <code className="text-accent-green bg-surface px-1 py-0.5 rounded">DISCORD_WEBHOOK_URL</code> in .env to enable notifications for trade entries, exits, and retrains.
-          </p>
-          <div className="flex gap-2">
-            <button onClick={async () => {
-              try {
-                const r = await api.testNotifications();
-                setNotifTestResult(r.status === 'sent' ? `Test sent to ${r.channels?.join(', ') || 'channels'}!` : 'Not configured -- set webhook URLs in .env');
-                setTimeout(() => setNotifTestResult(''), 4000);
-              } catch (e) { setNotifTestResult('Failed to send'); setTimeout(() => setNotifTestResult(''), 3000); }
-            }}
-              className="px-3 py-1.5 bg-white/5 text-text-secondary text-[10px] font-semibold uppercase tracking-wide rounded hover:bg-white/10 transition-all">
-              Test Notifications
-            </button>
-            {notifTestResult && (
-              <span className={`text-[10px] self-center ${notifTestResult.includes('sent') ? 'text-accent-green' : 'text-accent-yellow'}`}>
-                {notifTestResult}
-              </span>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Retrain Schedule */}
-      <div className="bg-card border border-border rounded-lg p-5">
-        <h3 className="text-[10px] uppercase tracking-widest text-text-secondary font-semibold mb-4">Model Retrain Schedule</h3>
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-xs">Status</span>
-            <span className={`text-[10px] px-2.5 py-1 rounded font-semibold uppercase tracking-wide ${
-              retrainSchedule.active ? 'bg-accent-green/10 text-accent-green' : 'bg-white/5 text-text-muted'
-            }`}>{retrainSchedule.active ? 'Active' : 'Inactive'}</span>
-          </div>
-          {retrainSchedule.next_run && (
-            <div className="text-[10px] text-text-secondary">
-              Next run: <span className="text-white font-mono">{new Date(retrainSchedule.next_run).toLocaleString()}</span>
+              )}
             </div>
           )}
-          <div>
-            <label className="text-[10px] uppercase tracking-widest text-text-secondary block mb-1">
-              Days <span className="normal-case tracking-normal text-text-muted">-- comma-separated: mon,tue,wed,thu,fri,sat,sun</span>
-            </label>
-            <input type="text" value={retrainDays} onChange={e => setRetrainDays(e.target.value)}
-              placeholder="mon,wed,fri"
-              className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm font-mono text-white focus:border-accent-green focus:outline-none transition-colors" />
-          </div>
-          <div>
-            <label className="text-[10px] uppercase tracking-widest text-text-secondary block mb-1">
-              Hour (0-23 UTC)
-            </label>
-            <input type="number" min={0} max={23} value={retrainHour} onChange={e => setRetrainHour(parseInt(e.target.value) || 0)}
-              className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm font-mono text-white focus:border-accent-green focus:outline-none transition-colors" />
-          </div>
-          <div className="flex gap-2">
-            <button onClick={async () => {
-              try {
-                await api.updateRetrainSchedule(retrainDays, retrainHour);
-                const s = await api.getRetrainSchedule();
-                setRetrainSchedule(s);
-                alert('Schedule updated!');
-              } catch (e) { alert(`Update failed: ${e.message}`); }
-            }}
-              className="px-3 py-1.5 bg-white text-black text-[10px] font-semibold uppercase tracking-wide rounded hover:bg-gray-200 transition-all">
-              Update Schedule
-            </button>
-            <button onClick={async () => {
-              setRetrainLoading(true);
-              try {
-                await api.retrainNow();
-                alert('Retrain complete! Cumulative training data has been updated.');
-                onRefresh();
-              } catch (e) { alert(`Retrain failed: ${e.message}`); }
-              finally { setRetrainLoading(false); }
-            }}
-              disabled={retrainLoading}
-              className="px-3 py-1.5 bg-accent-green/10 text-accent-green text-[10px] font-semibold uppercase tracking-wide rounded hover:bg-accent-green/20 disabled:opacity-30 transition-all">
-              {retrainLoading ? 'Retraining...' : 'Retrain Now'}
-            </button>
-          </div>
-        </div>
-      </div>
 
-      {/* Strategy reference */}
-      <div className="bg-card border border-border rounded-lg p-5">
-        <h3 className="text-[10px] uppercase tracking-widest text-text-secondary font-semibold mb-3">Strategy Reference</h3>
-        <div className="space-y-1.5 text-xs font-mono">
-          {[
-            { phase: '1', text: `Random Forest -- ${status?.model?.n_estimators || 500} trees + GB(150), sqrt(features) per tree` },
-            { phase: '2', text: `Kelly sizing: f* = (bp - q) / b, using ${(config.kelly_fraction * 100).toFixed(0)}% Kelly (${config.kelly_fraction <= 0.25 ? 'quarter' : config.kelly_fraction <= 0.5 ? 'half' : 'full'})` },
-            { phase: '3', text: `Risk: max $${(config.max_bet_amount_cents / 100).toFixed(0)}/bet, $${(config.max_daily_loss_cents / 100).toFixed(0)}/day loss limit, ${config.max_open_positions} max positions` },
-            { phase: '4', text: `Entry: edge >= ${(config.min_edge_threshold * 100).toFixed(0)}% (model_prob - market_price)` },
-            { phase: '5', text: 'Sharpe Ratio = (Rp - Rf) / \u03C3  |  <1 bad, 1-2 good, >2 excellent' },
-            { phase: '6', text: 'Log returns = ln(P1/P0) -- additive, direction-adjusted for YES/NO sides' },
-            { phase: '7', text: 'Exit: market_price >= model_prob * 0.9 or days_to_expiry <= 7' },
-            { phase: '8', text: 'Training: cumulative data persistence -- each run builds on previous samples' },
-          ].map(({ phase, text }) => (
-            <div key={phase} className="bg-surface border border-border rounded p-2.5 card-hover">
-              <span className="text-accent-green">#{phase}</span>
-              <span className="text-text-secondary ml-2">{text}</span>
+          {logTab === 'live' && (
+            <div className="space-y-3">
+              {liveLog?.completed_trades?.length > 0 ? (
+                <div>
+                  <h4 className="text-[10px] uppercase tracking-widest text-text-muted mb-2">
+                    Completed Live Trades ({liveLog.completed_trades.length})
+                  </h4>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-[10px] font-mono">
+                      <thead>
+                        <tr className="table-header">
+                          <th className="table-cell text-left py-1.5 px-2">Ticker</th>
+                          <th className="table-cell text-center py-1.5 px-1">Side</th>
+                          <th className="table-cell text-right py-1.5 px-1">Entry</th>
+                          <th className="table-cell text-right py-1.5 px-1">Exit</th>
+                          <th className="table-cell text-right py-1.5 px-2">P&L</th>
+                          <th className="table-cell text-center py-1.5 px-1">Result</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {liveLog.completed_trades.map((t, i) => (
+                          <tr key={i} className={`table-row ${t.won ? 'row-win' : 'row-loss'}`}>
+                            <td className="table-cell py-1 px-2 text-text-primary max-w-[120px] truncate">{t.ticker}</td>
+                            <td className="table-cell py-1 px-1 text-center">
+                              <span className={`badge ${t.side === 'yes' ? 'badge-green' : 'badge-red'}`}>
+                                {t.side?.toUpperCase()}
+                              </span>
+                            </td>
+                            <td className="table-cell py-1 px-1 text-right text-text-secondary">{t.entry_price != null ? (t.entry_price * 100).toFixed(0) + 'c' : '--'}</td>
+                            <td className="table-cell py-1 px-1 text-right text-text-secondary">{t.exit_price != null ? (t.exit_price * 100).toFixed(0) + 'c' : '--'}</td>
+                            <td className="table-cell py-1 px-2 text-right">
+                              <span className={`badge ${(t.pnl_cents ?? 0) >= 0 ? 'badge-green' : 'badge-red'}`}>
+                                ${((t.pnl_cents ?? 0) / 100).toFixed(2)}
+                              </span>
+                            </td>
+                            <td className="table-cell py-1 px-1 text-center">
+                              <span className={`badge ${t.won ? 'badge-green' : 'badge-red'}`}>
+                                {t.won ? 'W' : 'L'}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-[10px] text-text-muted text-center py-4">
+                  No live trades yet. Enable Auto-Trade to execute real orders on Kalshi.
+                </div>
+              )}
+
+              {liveLog?.live_log?.length > 0 && (
+                <div>
+                  <h4 className="text-[10px] uppercase tracking-widest text-text-muted mb-2">Recent Live Activity</h4>
+                  <div className="space-y-1 max-h-32 overflow-y-auto">
+                    {liveLog.live_log.slice().reverse().map((entry, i) => (
+                      <div key={i} className="text-[10px] font-mono bg-surface-2 rounded px-2 py-1 flex justify-between">
+                        <span className="text-text-secondary">{entry.time ? new Date(entry.time).toLocaleTimeString() : '--'}</span>
+                        <span className="text-accent-red">
+                          {entry.action?.toUpperCase()} {entry.ticker} {entry.side?.toUpperCase()}
+                          {entry.edge ? ` edge: ${(entry.edge * 100).toFixed(1)}%` : ''}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
-          ))}
+          )}
         </div>
-      </div>
 
-      {/* Setup */}
-      <div className="bg-card border border-border rounded-lg p-5">
-        <h3 className="text-[10px] uppercase tracking-widest text-text-secondary font-semibold mb-3">Setup</h3>
-        <div className="space-y-2 text-xs text-text-secondary">
-          <p>1. Copy <code className="text-accent-green bg-surface px-1.5 py-0.5 rounded">.env.example</code> to <code className="text-accent-green bg-surface px-1.5 py-0.5 rounded">.env</code></p>
-          <p>2. Add Kalshi API key + private key from <code className="text-white">demo.kalshi.co</code></p>
-          <p>3. Add Anthropic API key (optional, for AI+RF hybrid analysis)</p>
-          <p>4. Add Supabase URL + key (optional, for persistent trade history)</p>
-          <p>5. Add Slack/Discord webhook URLs (optional, for trade notifications)</p>
-          <p>6. Backend: <code className="text-accent-green bg-surface px-1.5 py-0.5 rounded">uvicorn bot.server:app --reload --port 8000</code></p>
-          <p>7. Frontend: <code className="text-accent-green bg-surface px-1.5 py-0.5 rounded">cd frontend && npm run dev</code></p>
+        {/* Retrain Schedule */}
+        <div className="card p-5">
+          <h3 className="section-title mb-4">Model Retrain Schedule</h3>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs">Status</span>
+              <span className={`badge ${retrainSchedule.active ? 'badge-green' : 'badge-muted'}`}>
+                {retrainSchedule.active ? 'Active' : 'Inactive'}
+              </span>
+            </div>
+            {retrainSchedule.next_run && (
+              <div className="text-[10px] text-text-secondary">
+                Next run: <span className="text-text-primary font-mono">{new Date(retrainSchedule.next_run).toLocaleString()}</span>
+              </div>
+            )}
+            <div>
+              <label className="text-[10px] uppercase tracking-widest text-text-secondary block mb-1">
+                Days <span className="normal-case tracking-normal text-text-muted">-- comma-separated: mon,tue,wed,thu,fri,sat,sun</span>
+              </label>
+              <input type="text" value={retrainDays} onChange={e => setRetrainDays(e.target.value)}
+                placeholder="mon,wed,fri"
+                className="input" />
+            </div>
+            <div>
+              <label className="text-[10px] uppercase tracking-widest text-text-secondary block mb-1">
+                Hour (0-23 UTC)
+              </label>
+              <input type="number" min={0} max={23} value={retrainHour} onChange={e => setRetrainHour(parseInt(e.target.value) || 0)}
+                className="input" />
+            </div>
+            <div className="flex gap-2">
+              <button onClick={async () => {
+                try {
+                  await api.updateRetrainSchedule(retrainDays, retrainHour);
+                  const s = await api.getRetrainSchedule();
+                  setRetrainSchedule(s);
+                  alert('Schedule updated!');
+                } catch (e) { alert(`Update failed: ${e.message}`); }
+              }}
+                className="btn-primary">
+                Update Schedule
+              </button>
+              <button onClick={async () => {
+                setRetrainLoading(true);
+                try {
+                  await api.retrainNow();
+                  alert('Retrain complete! Cumulative training data has been updated.');
+                  onRefresh();
+                } catch (e) { alert(`Retrain failed: ${e.message}`); }
+                finally { setRetrainLoading(false); }
+              }}
+                disabled={retrainLoading}
+                className="btn-secondary">
+                {retrainLoading ? 'Retraining...' : 'Retrain Now'}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Strategy Reference */}
+        <div className="card p-5">
+          <h3 className="section-title mb-3">Strategy Reference</h3>
+          <div className="space-y-2 text-xs font-mono">
+            {[
+              { phase: '1', text: `Random Forest -- ${status?.model?.n_estimators || 500} trees + GB(150), sqrt(features) per tree` },
+              { phase: '2', text: `Kelly sizing: f* = (bp - q) / b, using ${(config.kelly_fraction * 100).toFixed(0)}% Kelly (${config.kelly_fraction <= 0.25 ? 'quarter' : config.kelly_fraction <= 0.5 ? 'half' : 'full'})` },
+              { phase: '3', text: `Risk: max $${(config.max_bet_amount_cents / 100).toFixed(0)}/bet, $${(config.max_daily_loss_cents / 100).toFixed(0)}/day loss limit, ${config.max_open_positions} max positions` },
+              { phase: '4', text: `Entry: edge >= ${(config.min_edge_threshold * 100).toFixed(0)}% (model_prob - market_price)` },
+              { phase: '5', text: 'Sharpe Ratio = (Rp - Rf) / \u03C3  |  <1 bad, 1-2 good, >2 excellent' },
+              { phase: '6', text: 'Log returns = ln(P1/P0) -- additive, direction-adjusted for YES/NO sides' },
+              { phase: '7', text: 'Exit: market_price >= model_prob * 0.9 or days_to_expiry <= 7' },
+              { phase: '8', text: 'Training: cumulative data persistence -- each run builds on previous samples' },
+            ].map(({ phase, text }) => (
+              <div key={phase} className="card-interactive flex items-start gap-3 p-3">
+                <span className="flex items-center justify-center w-6 h-6 rounded-full bg-accent-green/15 text-accent-green text-[11px] font-bold shrink-0">
+                  {phase}
+                </span>
+                <span className="text-text-secondary text-[11px] leading-relaxed">{text}</span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>

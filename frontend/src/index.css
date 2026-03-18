@@ -1,119 +1,209 @@
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* Dark theme (default) */
+/* ── Dark theme (default) — RGB triplets for Tailwind opacity support ── */
 :root {
-  --color-surface: #000000;
-  --color-card: #0a0a0a;
-  --color-border: #1a1a1a;
-  --color-accent: #ffffff;
-  --color-text-primary: #ffffff;
-  --color-text-secondary: #666666;
-  --color-text-muted: #444444;
-  --color-card-hover: #0f0f0f;
-  --color-scrollbar-track: #000;
-  --color-scrollbar-thumb: #222;
+  --color-surface: 9, 9, 11;
+  --color-surface-2: 17, 17, 19;
+  --color-card: 12, 12, 14;
+  --color-card-hover: 20, 20, 22;
+  --color-border: 30, 30, 34;
+  --color-border-subtle: 22, 22, 24;
+  --color-accent: 228, 228, 231;
+  --color-text-primary: 250, 250, 250;
+  --color-text-secondary: 113, 113, 122;
+  --color-text-muted: 63, 63, 70;
+  --color-green: 52, 211, 153;
+  --color-red: 248, 113, 113;
+  --color-yellow: 251, 191, 36;
+  --color-blue: 96, 165, 250;
+  --color-purple: 167, 139, 250;
+  --color-cyan: 34, 211, 238;
+  --color-orange: 251, 146, 60;
 }
 
-/* Light theme */
+/* ── Light theme ── */
 .light {
-  --color-surface: #f5f5f5;
-  --color-card: #ffffff;
-  --color-border: #e0e0e0;
-  --color-accent: #000000;
-  --color-text-primary: #111111;
-  --color-text-secondary: #666666;
-  --color-text-muted: #999999;
-  --color-card-hover: #f0f0f0;
-  --color-scrollbar-track: #f5f5f5;
-  --color-scrollbar-thumb: #ccc;
+  --color-surface: 250, 250, 250;
+  --color-surface-2: 244, 244, 245;
+  --color-card: 255, 255, 255;
+  --color-card-hover: 244, 244, 245;
+  --color-border: 228, 228, 231;
+  --color-border-subtle: 244, 244, 245;
+  --color-accent: 24, 24, 27;
+  --color-text-primary: 9, 9, 11;
+  --color-text-secondary: 113, 113, 122;
+  --color-text-muted: 161, 161, 170;
+  --color-green: 5, 150, 105;
+  --color-red: 220, 38, 38;
+  --color-yellow: 217, 119, 6;
+  --color-blue: 37, 99, 235;
+  --color-purple: 124, 58, 237;
+  --color-cyan: 8, 145, 178;
+  --color-orange: 234, 88, 12;
 }
 
 body {
   margin: 0;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
-  background: var(--color-surface);
-  color: var(--color-text-primary);
+  -moz-osx-font-smoothing: grayscale;
+  background: rgb(var(--color-surface));
+  color: rgb(var(--color-text-primary));
 }
 
-/* Custom scrollbar */
-::-webkit-scrollbar { width: 5px; }
-::-webkit-scrollbar-track { background: var(--color-scrollbar-track); }
-::-webkit-scrollbar-thumb { background: var(--color-scrollbar-thumb); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #333; }
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: rgb(var(--color-surface)); }
+::-webkit-scrollbar-thumb { background: rgb(var(--color-border)); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(var(--color-text-muted), 0.6); }
 
-/* Pulse animation for live indicators */
+/* ── Reusable component classes ── */
+@layer components {
+  /* Cards */
+  .card {
+    @apply bg-card border border-border rounded-xl transition-all duration-200;
+  }
+  .card-interactive {
+    @apply card cursor-pointer;
+  }
+  .card-interactive:hover {
+    border-color: rgba(var(--color-text-muted), 0.3);
+    background: rgb(var(--color-card-hover));
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  }
+
+  /* Stat cards with colored left accent */
+  .stat-card {
+    @apply card p-4 relative overflow-hidden;
+  }
+  .stat-card::before {
+    content: '';
+    @apply absolute left-0 top-0 bottom-0 w-[3px] rounded-l-xl;
+    background: var(--accent-color, rgb(var(--color-text-muted)));
+  }
+
+  /* Badges / pills */
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-wider;
+  }
+  .badge-green { @apply bg-accent-green/10 text-accent-green; }
+  .badge-red { @apply bg-accent-red/10 text-accent-red; }
+  .badge-yellow { @apply bg-accent-yellow/10 text-accent-yellow; }
+  .badge-blue { @apply bg-accent-blue/10 text-accent-blue; }
+  .badge-purple { @apply bg-accent-purple/10 text-accent-purple; }
+  .badge-cyan { @apply bg-accent-cyan/10 text-accent-cyan; }
+  .badge-muted { @apply bg-text-muted/10 text-text-secondary; }
+
+  /* Buttons */
+  .btn-primary {
+    @apply px-4 py-2 bg-accent-green text-black text-xs font-semibold tracking-wide rounded-lg
+           hover:brightness-110 active:brightness-95 disabled:opacity-40 disabled:cursor-not-allowed
+           transition-all duration-150;
+  }
+  .btn-secondary {
+    @apply px-4 py-2 bg-card border border-border text-text-primary text-xs font-semibold tracking-wide rounded-lg
+           hover:bg-card-hover disabled:opacity-40 disabled:cursor-not-allowed
+           transition-all duration-150;
+  }
+  .btn-secondary:hover {
+    border-color: rgba(var(--color-text-muted), 0.3);
+  }
+  .btn-ghost {
+    @apply px-3 py-1.5 text-text-secondary text-[10px] font-semibold uppercase tracking-wider rounded-lg
+           hover:bg-card hover:text-text-primary transition-all duration-150;
+  }
+  .btn-danger {
+    @apply px-4 py-2 bg-accent-red/10 text-accent-red text-xs font-semibold tracking-wide rounded-lg
+           border border-accent-red/20 hover:bg-accent-red/20 disabled:opacity-40 disabled:cursor-not-allowed
+           transition-all duration-150;
+  }
+
+  /* Inputs */
+  .input {
+    @apply w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm font-mono text-text-primary
+           focus:outline-none transition-all duration-150 placeholder:text-text-muted;
+  }
+  .input:focus {
+    border-color: rgba(var(--color-green), 0.5);
+    box-shadow: 0 0 0 1px rgba(var(--color-green), 0.2);
+  }
+
+  /* Table styles */
+  .table-header {
+    @apply text-text-secondary text-[10px] uppercase tracking-wider font-medium;
+  }
+  .table-row {
+    @apply border-b border-border-subtle transition-colors duration-100;
+  }
+  .table-row:hover {
+    background: rgba(var(--color-surface-2), 0.5);
+  }
+  .table-cell {
+    @apply px-4 py-3;
+  }
+
+  /* Section headers */
+  .section-title {
+    @apply text-[11px] uppercase tracking-widest text-text-secondary font-semibold;
+  }
+
+  /* Tooltip container */
+  .tooltip-wrapper {
+    @apply relative inline-flex items-center gap-1 cursor-help;
+  }
+  .tooltip-wrapper .tooltip-text {
+    @apply invisible opacity-0 absolute bottom-full left-1/2 -translate-x-1/2 mb-2
+           px-3 py-2 bg-card border border-border rounded-lg text-[10px] text-text-secondary
+           whitespace-nowrap z-50 shadow-lg transition-all duration-150 pointer-events-none
+           font-normal normal-case tracking-normal;
+  }
+  .tooltip-wrapper:hover .tooltip-text {
+    @apply visible opacity-100;
+  }
+
+  /* Progress bar */
+  .progress-track {
+    @apply h-1 rounded-full bg-border overflow-hidden mt-2;
+  }
+  .progress-fill {
+    @apply h-full rounded-full transition-all duration-500 ease-out;
+  }
+
+  /* Win/loss row tinting */
+  .row-win { background: rgba(var(--color-green), 0.03); }
+  .row-loss { background: rgba(var(--color-red), 0.03); }
+  .row-win:hover { background: rgba(var(--color-green), 0.06) !important; }
+  .row-loss:hover { background: rgba(var(--color-red), 0.06) !important; }
+}
+
+/* ── Pulse animation for live indicators ── */
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.3; transform: scale(0.8); }
+  50% { opacity: 0.4; transform: scale(0.85); }
 }
 .pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
 
-/* Glow effects */
-.glow-green { box-shadow: 0 0 20px rgba(0, 255, 135, 0.15); }
-.glow-red { box-shadow: 0 0 20px rgba(255, 59, 59, 0.15); }
-.glow-blue { box-shadow: 0 0 20px rgba(59, 130, 246, 0.15); }
-.glow-purple { box-shadow: 0 0 20px rgba(168, 85, 247, 0.15); }
-
-/* Card hover */
-.card-hover { transition: all 0.2s ease; }
-.card-hover:hover { border-color: #333; background: var(--color-card-hover); }
-
-/* Colored left border accents for stat cards */
-.border-l-green { border-left: 3px solid #00ff87; }
-.border-l-red { border-left: 3px solid #ff3b3b; }
-.border-l-yellow { border-left: 3px solid #ffb800; }
-.border-l-blue { border-left: 3px solid #3b82f6; }
-.border-l-purple { border-left: 3px solid #a855f7; }
-.border-l-cyan { border-left: 3px solid #22d3ee; }
-.border-l-white { border-left: 3px solid #ffffff; }
-
-/* Progress bar for win rate / confidence */
-.progress-bar {
-  height: 3px;
-  border-radius: 2px;
-  background: #1a1a1a;
-  margin-top: 6px;
-  overflow: hidden;
-}
-.progress-bar .fill {
-  height: 100%;
-  border-radius: 2px;
-  transition: width 0.6s ease;
-}
-
-/* Subtle row tint for trade tables */
-.row-win { background: rgba(0, 255, 135, 0.03); }
-.row-loss { background: rgba(255, 59, 59, 0.03); }
-.row-win:hover { background: rgba(0, 255, 135, 0.07) !important; }
-.row-loss:hover { background: rgba(255, 59, 59, 0.07) !important; }
-
-/* Pulsing glow for active indicators */
+/* ── Glow ring for active cards ── */
 @keyframes glow-pulse {
-  0%, 100% { box-shadow: 0 0 8px rgba(0, 255, 135, 0.3); }
-  50% { box-shadow: 0 0 16px rgba(0, 255, 135, 0.6); }
+  0%, 100% { box-shadow: 0 0 8px rgba(52, 211, 153, 0.2); }
+  50% { box-shadow: 0 0 20px rgba(52, 211, 153, 0.4); }
 }
-.glow-pulse { animation: glow-pulse 2s ease-in-out infinite; }
+.glow-pulse { animation: glow-pulse 2.5s ease-in-out infinite; }
 
-/* Gradient text for key metrics */
-.gradient-text-green {
-  background: linear-gradient(135deg, #00ff87, #22d3ee);
+/* ── Gradient text ── */
+.gradient-green {
+  background: linear-gradient(135deg, rgb(var(--color-green)), rgb(var(--color-cyan)));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
-.gradient-text-red {
-  background: linear-gradient(135deg, #ff3b3b, #ffb800);
+.gradient-red {
+  background: linear-gradient(135deg, rgb(var(--color-red)), rgb(var(--color-orange)));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
-
-/* Light theme overrides for colored text */
-.light .text-white { color: var(--color-text-primary); }
-.light .bg-white { background: var(--color-accent); }
-.light .text-black { color: #ffffff; }
