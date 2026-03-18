@@ -42,7 +42,7 @@ export default function Dashboard({ status, scanResult, onScan, scanning }) {
           <div className="bg-surface border border-border rounded-lg p-3">
             <div className="text-[10px] uppercase tracking-widest text-text-secondary mb-1">Ensemble</div>
             <div className="font-mono text-sm text-white">
-              RF(200) + GB(150) &times; {status?.model?.n_features || 106}
+              RF({status?.model?.n_estimators || 500}) + GB(150) &times; {status?.model?.n_features || 106}
             </div>
           </div>
           <div className="bg-surface border border-border rounded-lg p-3">

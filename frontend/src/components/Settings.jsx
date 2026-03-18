@@ -249,7 +249,7 @@ export default function Settings({ status, onRefresh }) {
         <h3 className="text-[10px] uppercase tracking-widest text-text-secondary font-semibold mb-3">Strategy Reference</h3>
         <div className="space-y-1.5 text-xs font-mono">
           {[
-            { phase: '1', text: `Random Forest — ${status?.model?.n_estimators || 200} trees + GB(150), sqrt(features) per tree` },
+            { phase: '1', text: `Random Forest — ${status?.model?.n_estimators || 500} trees + GB(150), sqrt(features) per tree` },
             { phase: '4', text: 'Entry: market_price ≤ model_prob × 0.5 (buy at 2x undervalue)' },
             { phase: '5', text: 'Sharpe Ratio = (Rp - Rf) / σ  |  <1 bad, 1-2 good, >2 excellent' },
             { phase: '6', text: 'Log returns = ln(P1/P0) — additive, correct for big moves' },
