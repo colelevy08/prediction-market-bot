@@ -85,4 +85,42 @@ export const api = {
       body: JSON.stringify({ enabled }),
     }),
   getAutoScanStatus: () => request('/autoscan/status'),
+
+  // Notifications
+  testNotifications: () => request('/notifications/test', { method: 'POST' }),
+  getNotificationConfig: () => request('/notifications/config'),
+
+  // CSV Export
+  exportTradesCsv: (source = 'paper') => {
+    const url = `${API}/export/trades?source=${source}`;
+    window.open(url, '_blank');
+  },
+
+  // Category P&L & Heatmap
+  getPerformanceByCategory: (source = 'paper') =>
+    request(`/performance/by-category?source=${source}`),
+  getPortfolioHeatmap: () => request('/portfolio/heatmap'),
+
+  // Trade Notes
+  updateTradeNotes: (tradeIndex, notes, source = 'paper') =>
+    request(`/trade/${tradeIndex}/notes?source=${source}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ notes }),
+    }),
+
+  // Retrain Schedule
+  getRetrainSchedule: () => request('/retrain/schedule'),
+  updateRetrainSchedule: (days, hour) =>
+    request('/retrain/schedule', {
+      method: 'POST',
+      body: JSON.stringify({ days, hour }),
+    }),
+  retrainNow: () => request('/retrain/now', { method: 'POST' }),
+
+  // Webhook
+  triggerWebhook: (action, params = {}) =>
+    request('/webhook', {
+      method: 'POST',
+      body: JSON.stringify({ action, params }),
+    }),
 };

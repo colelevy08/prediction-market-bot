@@ -41,54 +41,72 @@ class HistoricalDataFetcher:
     def fetch_settled_markets(self, limit: int = 200) -> list[dict]:
         """
         Fetch settled (resolved) markets with their outcomes.
+        Paginates through multiple pages to get up to `limit` samples.
 
         Returns list of dicts with market data + result (yes/no).
         """
-        data = self.kalshi._request("GET", "/events", params={
-            "limit": min(limit, 200),
-            "status": "settled",
-            "with_nested_markets": "true",
-        })
-
         settled = []
-        for ev in data.get("events", []):
-            event = Event(
-                event_ticker=ev.get("event_ticker", ""),
-                title=ev.get("title", ""),
-                category=ev.get("category", ""),
-            )
-            for m in ev.get("markets", []):
-                result = m.get("result", "")
-                if result not in ("yes", "no"):
-                    continue
+        cursor = None
+        page_size = min(limit, 200)
 
-                market = Market(
-                    ticker=m.get("ticker", ""),
-                    event_ticker=m.get("event_ticker", ""),
-                    title=m.get("title", ""),
-                    subtitle=m.get("subtitle", ""),
-                    yes_bid=m.get("yes_bid", 0),
-                    yes_ask=m.get("yes_ask", 0),
-                    no_bid=m.get("no_bid", 0),
-                    no_ask=m.get("no_ask", 0),
-                    volume=m.get("volume", 0),
-                    open_interest=m.get("open_interest", 0),
-                    status="settled",
-                    close_time=m.get("close_time", ""),
-                    result=result,
-                    category=m.get("category", ""),
+        while len(settled) < limit:
+            params = {
+                "limit": page_size,
+                "status": "settled",
+                "with_nested_markets": "true",
+            }
+            if cursor:
+                params["cursor"] = cursor
+
+            data = self.kalshi._request("GET", "/events", params=params)
+
+            events = data.get("events", [])
+            if not events:
+                break
+
+            for ev in events:
+                event = Event(
+                    event_ticker=ev.get("event_ticker", ""),
+                    title=ev.get("title", ""),
+                    category=ev.get("category", ""),
                 )
+                for m in ev.get("markets", []):
+                    result = m.get("result", "")
+                    if result not in ("yes", "no"):
+                        continue
 
-                features = extract_features(market, event)
-                settled.append({
-                    "market": market,
-                    "event": event,
-                    "features": features,
-                    "outcome": 1 if result == "yes" else 0,
-                    "result": result,
-                })
+                    market = Market(
+                        ticker=m.get("ticker", ""),
+                        event_ticker=m.get("event_ticker", ""),
+                        title=m.get("title", ""),
+                        subtitle=m.get("subtitle", ""),
+                        yes_bid=m.get("yes_bid", 0),
+                        yes_ask=m.get("yes_ask", 0),
+                        no_bid=m.get("no_bid", 0),
+                        no_ask=m.get("no_ask", 0),
+                        volume=m.get("volume", 0),
+                        open_interest=m.get("open_interest", 0),
+                        status="settled",
+                        close_time=m.get("close_time", ""),
+                        result=result,
+                        category=m.get("category", ""),
+                    )
 
-        return settled
+                    features = extract_features(market, event)
+                    settled.append({
+                        "market": market,
+                        "event": event,
+                        "features": features,
+                        "outcome": 1 if result == "yes" else 0,
+                        "result": result,
+                    })
+
+            # Check for next page cursor
+            cursor = data.get("cursor")
+            if not cursor:
+                break
+
+        return settled[:limit]
 
     def fetch_historical_trades(self, ticker: str, limit: int = 100) -> list[dict]:
         """Fetch trade history for a specific market."""
@@ -345,6 +363,7 @@ class PaperPosition:
     contracts: int
     model_prob: float
     entry_time: str
+    category: str = ""
     min_price_seen: float = 1.0
     max_price_seen: float = 0.0
 
@@ -408,6 +427,14 @@ class PaperTrader:
             entry_price = sig.market_probability
             contracts = max(1, cost // max(int(entry_price * 100), 1))
 
+            # Find category from the signal's event
+            sig_category = ""
+            for ev in events:
+                for m in ev.markets:
+                    if m.ticker == sig.ticker:
+                        sig_category = ev.category or m.category or ""
+                        break
+
             self.positions[sig.ticker] = PaperPosition(
                 ticker=sig.ticker,
                 side=sig.side.value,
@@ -415,6 +442,7 @@ class PaperTrader:
                 contracts=contracts,
                 model_prob=sig.fair_probability,
                 entry_time=datetime.now(timezone.utc).isoformat(),
+                category=sig_category,
                 min_price_seen=entry_price,
                 max_price_seen=entry_price,
             )
@@ -490,6 +518,7 @@ class PaperTrader:
                     model_probability=pos.model_prob,
                     market_probability_at_entry=pos.entry_price,
                     entry_time=pos.entry_time,
+                    category=pos.category,
                 )
 
                 if pos.side == "yes":

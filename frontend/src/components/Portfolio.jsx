@@ -1,21 +1,25 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api';
 
+const HEATMAP_COLORS = ['#1a1a2e', '#16213e', '#0f3460', '#533483', '#e94560', '#00ff87'];
+
 export default function Portfolio() {
   const [portfolio, setPortfolio] = useState(null);
   const [positions, setPositions] = useState([]);
   const [orders, setOrders] = useState([]);
+  const [heatmap, setHeatmap] = useState({});
   const [loading, setLoading] = useState(true);
 
   const refresh = async () => {
     setLoading(true);
     try {
-      const [p, pos, ord] = await Promise.all([
-        api.getPortfolio(), api.getPositions(), api.getOrders(),
+      const [p, pos, ord, hm] = await Promise.all([
+        api.getPortfolio(), api.getPositions(), api.getOrders(), api.getPortfolioHeatmap(),
       ]);
       setPortfolio(p);
       setPositions(pos.positions || []);
       setOrders(ord.orders || []);
+      setHeatmap(hm.categories || {});
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   };
@@ -98,6 +102,32 @@ export default function Portfolio() {
           </div>
         )}
       </div>
+
+      {/* Category Heatmap */}
+      {Object.keys(heatmap).length > 0 && (
+        <div className="bg-card border border-border rounded-lg p-5">
+          <h3 className="text-[10px] uppercase tracking-widest text-text-secondary font-semibold mb-4">Portfolio Heatmap</h3>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+            {Object.entries(heatmap).map(([cat, data]) => {
+              const totalValue = data.positions.reduce((s, p) => s + p.entry_value_cents, 0);
+              return (
+                <div key={cat} className="bg-surface border border-border rounded-lg p-3 card-hover">
+                  <div className="text-[10px] uppercase tracking-widest text-text-muted mb-1">{cat}</div>
+                  <div className="text-lg font-bold font-mono text-white">{data.count} pos</div>
+                  <div className="text-[10px] text-text-secondary">${(totalValue / 100).toFixed(2)} invested</div>
+                  <div className="mt-2 flex gap-1 flex-wrap">
+                    {data.positions.map((p, i) => (
+                      <span key={i} className="text-[9px] font-mono bg-accent-green/10 text-accent-green px-1.5 py-0.5 rounded">
+                        {p.ticker}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Orders */}
       <div className="bg-card border border-border rounded-lg overflow-hidden">

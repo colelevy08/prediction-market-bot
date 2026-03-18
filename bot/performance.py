@@ -33,6 +33,8 @@ class TradeRecord:
     model_probability: float = 0.0
     market_probability_at_entry: float = 0.0
     won: bool = False
+    category: str = ""       # market category (politics, crypto, sports, etc.)
+    notes: str = ""          # user-added trade journal notes
 
 
 @dataclass
@@ -89,6 +91,8 @@ class PerformanceTracker:
         market_probability_at_entry: float = 0.0,
         entry_time: str = "",
         exit_time: str = "",
+        category: str = "",
+        notes: str = "",
     ) -> TradeRecord:
         """Record a completed trade and compute its metrics."""
 
@@ -121,6 +125,8 @@ class PerformanceTracker:
             model_probability=model_probability,
             market_probability_at_entry=market_probability_at_entry,
             won=won,
+            category=category,
+            notes=notes,
         )
         self.trades.append(trade)
 
@@ -224,9 +230,40 @@ class PerformanceTracker:
                 "mfe": round(t.mfe, 4),
                 "model_probability": round(t.model_probability, 4),
                 "won": t.won,
+                "category": t.category,
+                "notes": t.notes,
             }
             for t in self.trades
         ]
+
+    def get_metrics_by_category(self) -> dict:
+        """Compute per-category performance metrics."""
+        from collections import defaultdict
+        cats = defaultdict(list)
+        for t in self.trades:
+            cats[t.category or "uncategorized"].append(t)
+        result = {}
+        for cat, trades in cats.items():
+            wins = [t for t in trades if t.won]
+            pnls = [t.pnl_cents for t in trades]
+            result[cat] = {
+                "total_trades": len(trades),
+                "wins": len(wins),
+                "losses": len(trades) - len(wins),
+                "win_rate": round(len(wins) / len(trades), 4) if trades else 0,
+                "total_pnl_cents": sum(pnls),
+                "avg_pnl_cents": round(sum(pnls) / len(pnls), 2) if pnls else 0,
+                "best_trade": max(pnls) if pnls else 0,
+                "worst_trade": min(pnls) if pnls else 0,
+            }
+        return result
+
+    def update_trade_notes(self, trade_index: int, notes: str) -> bool:
+        """Update notes on a trade by index."""
+        if 0 <= trade_index < len(self.trades):
+            self.trades[trade_index].notes = notes
+            return True
+        return False
 
     @staticmethod
     def _std(values: list[float]) -> float:

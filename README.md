@@ -4,6 +4,8 @@
 
 Built on the Random Forest strategy from [@noisyb0y1's guide](https://x.com/noisyb0y1/status/2033856891181220265) — 106 engineered features, ensemble ML model, and strict entry/exit rules designed to find 2x undervalued markets.
 
+**[View the User Guide (Google Slides)](https://docs.google.com/presentation/d/1XL55JNStvkXnntPCNXq7gIs96JTQiE12/edit?usp=sharing&ouid=111233944765850581624&rtpof=true&sd=true)**
+
 ```
 ┌─────────────────────────────────────────────────────┐
 │  PREDICTIONBOT                          DEMO  SCAN  │

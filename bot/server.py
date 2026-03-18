@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import FastAPI, HTTPException
+from apscheduler.triggers.cron import CronTrigger
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from bot.config import config
@@ -23,6 +27,7 @@ from bot.performance import PerformanceTracker
 from bot.arbitrage import detect_arbitrage
 from bot.backtester import Backtester, BacktestConfig, HistoricalDataFetcher, PaperTrader
 from bot.database import Database
+from bot.notifier import Notifier
 from bot.models import OrderRequest, Side, TradingSignal
 
 logger = logging.getLogger("predictionbot")
@@ -39,6 +44,7 @@ performance: PerformanceTracker | None = None
 paper_trader: PaperTrader | None = None
 db: Database | None = None
 scheduler: AsyncIOScheduler | None = None
+notifier: Notifier | None = None
 
 # Cache for latest scan results
 _cache: dict[str, Any] = {
@@ -109,6 +115,8 @@ async def _auto_scan_job():
                     order = risk_manager.build_order(sig)
                     kalshi.place_order(order)
                     risk_manager.record_trade()
+                    if notifier and notifier.is_configured:
+                        notifier.notify_trade_entry(sig.ticker, sig.side.value, sig.market_probability, order.price_cents)
                     logger.info(f"Auto-entry: {sig.ticker} ({sig.side.value})")
                 except Exception as e:
                     logger.error(f"Auto-entry failed for {sig.ticker}: {e}")
@@ -131,9 +139,33 @@ async def _auto_scan_job():
         logger.error(f"Auto-scan failed: {e}")
 
 
+async def _retrain_job():
+    """Scheduled job to retrain the paper trader's model."""
+    if not kalshi or not config.validate_kalshi() or not paper_trader:
+        return
+    try:
+        fetcher = HistoricalDataFetcher(kalshi)
+        settled = fetcher.fetch_settled_markets(limit=1000)
+        result = paper_trader.train_model(settled)
+        logger.info(f"Scheduled retrain: {len(settled)} samples, {result}")
+        if notifier and notifier.is_configured:
+            notifier.notify_retrain(len(settled), result.get("cv_accuracy", 0))
+        if db:
+            db.insert_training_run(
+                samples=len(settled),
+                cv_accuracy=result.get("cv_accuracy", 0),
+                oob_score=result.get("oob_score", 0),
+                n_features=result.get("n_features", 0),
+                n_estimators=result.get("n_estimators", 0),
+                feature_importance=result.get("feature_importance", {}),
+            )
+    except Exception as e:
+        logger.error(f"Scheduled retrain failed: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global kalshi, dk, rf_generator, ai_analyzer, risk_manager, performance, paper_trader, db, scheduler
+    global kalshi, dk, rf_generator, ai_analyzer, risk_manager, performance, paper_trader, db, scheduler, notifier
     db = Database()
     kalshi = KalshiClient()
     dk = DraftKingsClient()
@@ -142,12 +174,25 @@ async def lifespan(app: FastAPI):
     performance = PerformanceTracker(db=db, mode="live")
     paper_trader = PaperTrader(db=db)
     paper_trader.load_state()  # Restore from DB or disk
+    notifier = Notifier()
 
     if config.validate_anthropic():
         ai_analyzer = MarketAnalyzer()
 
     # Start APScheduler
     scheduler = AsyncIOScheduler()
+
+    # Add retrain schedule (default: Mon/Wed/Fri at 3am)
+    if config.retrain_days:
+        day_map = {"mon": "mon", "tue": "tue", "wed": "wed", "thu": "thu", "fri": "fri", "sat": "sat", "sun": "sun"}
+        days = ",".join(day_map.get(d.strip().lower(), d.strip()) for d in config.retrain_days.split(","))
+        scheduler.add_job(
+            _retrain_job,
+            CronTrigger(day_of_week=days, hour=config.retrain_hour),
+            id="retrain",
+            replace_existing=True,
+        )
+
     scheduler.start()
 
     yield
@@ -157,6 +202,8 @@ async def lifespan(app: FastAPI):
         scheduler.shutdown(wait=False)
     if paper_trader:
         paper_trader.save_state()  # Persist on shutdown
+    if notifier:
+        notifier.close()
     if kalshi:
         kalshi.close()
     if dk:
@@ -689,7 +736,7 @@ async def paper_train():
 
     try:
         fetcher = HistoricalDataFetcher(kalshi)
-        settled = fetcher.fetch_settled_markets(limit=200)
+        settled = fetcher.fetch_settled_markets(limit=1000)
         result = paper_trader.train_model(settled)
         return {"status": "trained", "samples": len(settled), **result}
     except Exception as e:
@@ -793,3 +840,194 @@ async def get_training_history(limit: int = 10):
     if not db or not db.is_connected:
         return {"runs": [], "source": "none"}
     return {"runs": db.get_training_history(limit=limit), "source": "supabase"}
+
+
+# ── Webhook Receiver ──────────────────────────────────────────────────────
+
+class WebhookPayload(BaseModel):
+    action: str = "scan"  # scan, retrain
+    params: dict = {}
+
+
+@app.post("/api/webhook")
+async def receive_webhook(
+    payload: WebhookPayload,
+    x_webhook_secret: str | None = Header(None),
+):
+    """External webhook to trigger scans or retrains."""
+    if config.webhook_secret and x_webhook_secret != config.webhook_secret:
+        raise HTTPException(403, "Invalid webhook secret")
+
+    if payload.action == "scan":
+        if not kalshi or not config.validate_kalshi():
+            raise HTTPException(400, "Kalshi not connected")
+        events = kalshi.get_events(limit=config.max_events_to_analyze)
+        if paper_trader and paper_trader.generator.model.is_trained:
+            result = paper_trader.scan_and_trade(events)
+            return {"action": "scan", "result": result}
+        return {"action": "scan", "result": "model not trained"}
+
+    elif payload.action == "retrain":
+        await _retrain_job()
+        return {"action": "retrain", "status": "completed"}
+
+    raise HTTPException(400, f"Unknown action: {payload.action}")
+
+
+# ── Notification Endpoints ────────────────────────────────────────────────
+
+@app.post("/api/notifications/test")
+async def test_notifications():
+    """Send a test notification to all configured channels."""
+    if not notifier or not notifier.is_configured:
+        return {"status": "not_configured", "channels": []}
+    result = notifier.send_test()
+    return {"status": "sent", **result}
+
+
+@app.get("/api/notifications/config")
+async def get_notification_config():
+    """Get notification configuration status."""
+    return {
+        "slack_configured": bool(config.slack_webhook_url),
+        "discord_configured": bool(config.discord_webhook_url),
+        "channels": notifier.channels if notifier else [],
+    }
+
+
+# ── CSV Export ────────────────────────────────────────────────────────────
+
+@app.get("/api/export/trades")
+async def export_trades_csv(source: str = "paper"):
+    """Export trade history as CSV download."""
+    trades = []
+    if source == "paper" and paper_trader:
+        trades = paper_trader.tracker.get_trade_history()
+    elif source == "live" and performance:
+        trades = performance.get_trade_history()
+
+    if not trades:
+        raise HTTPException(404, "No trades to export")
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=trades[0].keys())
+    writer.writeheader()
+    writer.writerows(trades)
+
+    return StreamingResponse(
+        io.BytesIO(output.getvalue().encode()),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=trades_{source}_{datetime.now(timezone.utc).strftime('%Y%m%d')}.csv"},
+    )
+
+
+# ── Category P&L / Heatmap ───────────────────────────────────────────────
+
+@app.get("/api/performance/by-category")
+async def get_performance_by_category(source: str = "paper"):
+    """Get P&L breakdown by market category."""
+    if source == "paper" and paper_trader:
+        return {"categories": paper_trader.tracker.get_metrics_by_category()}
+    elif source == "live" and performance:
+        return {"categories": performance.get_metrics_by_category()}
+    return {"categories": {}}
+
+
+@app.get("/api/portfolio/heatmap")
+async def get_portfolio_heatmap():
+    """Get portfolio positions grouped by category for heatmap visualization."""
+    if not paper_trader:
+        return {"categories": {}}
+
+    from collections import defaultdict
+    cats = defaultdict(lambda: {"positions": [], "total_pnl_cents": 0, "count": 0})
+
+    for ticker, pos in paper_trader.positions.items():
+        cat = pos.category or "uncategorized"
+        entry_val = pos.entry_price * 100 * pos.contracts
+        cats[cat]["positions"].append({
+            "ticker": ticker,
+            "side": pos.side,
+            "entry_price": pos.entry_price,
+            "contracts": pos.contracts,
+            "category": cat,
+            "entry_value_cents": int(entry_val),
+        })
+        cats[cat]["count"] += 1
+
+    return {"categories": dict(cats)}
+
+
+# ── Trade Notes ───────────────────────────────────────────────────────────
+
+class TradeNotesRequest(BaseModel):
+    notes: str
+
+
+@app.patch("/api/trade/{trade_index}/notes")
+async def update_trade_notes(trade_index: int, req: TradeNotesRequest, source: str = "paper"):
+    """Update notes on a specific trade by index."""
+    tracker = None
+    if source == "paper" and paper_trader:
+        tracker = paper_trader.tracker
+    elif source == "live" and performance:
+        tracker = performance
+
+    if not tracker:
+        raise HTTPException(400, "Tracker not available")
+
+    if tracker.update_trade_notes(trade_index, req.notes):
+        return {"status": "updated", "trade_index": trade_index}
+    raise HTTPException(404, f"Trade index {trade_index} not found")
+
+
+# ── Retrain Schedule ──────────────────────────────────────────────────────
+
+class RetrainScheduleRequest(BaseModel):
+    days: str = "mon,wed,fri"
+    hour: int = 3
+
+
+@app.get("/api/retrain/schedule")
+async def get_retrain_schedule():
+    """Get current retrain schedule."""
+    job = scheduler.get_job("retrain") if scheduler else None
+    return {
+        "days": config.retrain_days,
+        "hour": config.retrain_hour,
+        "active": job is not None,
+        "next_run": str(job.next_run_time) if job else None,
+    }
+
+
+@app.post("/api/retrain/schedule")
+async def update_retrain_schedule(req: RetrainScheduleRequest):
+    """Update the retrain schedule."""
+    if not scheduler:
+        raise HTTPException(500, "Scheduler not initialized")
+
+    config.retrain_days = req.days
+    config.retrain_hour = req.hour
+
+    day_map = {"mon": "mon", "tue": "tue", "wed": "wed", "thu": "thu", "fri": "fri", "sat": "sat", "sun": "sun"}
+    days = ",".join(day_map.get(d.strip().lower(), d.strip()) for d in req.days.split(","))
+
+    job = scheduler.get_job("retrain")
+    if job:
+        scheduler.reschedule_job("retrain", trigger=CronTrigger(day_of_week=days, hour=req.hour))
+    else:
+        scheduler.add_job(
+            _retrain_job,
+            CronTrigger(day_of_week=days, hour=req.hour),
+            id="retrain",
+            replace_existing=True,
+        )
+
+    return {"days": req.days, "hour": req.hour, "status": "updated"}
+
+
+@app.post("/api/retrain/now")
+async def retrain_now():
+    """Trigger an immediate model retrain."""
+    await _retrain_job()
+    return {"status": "retrain_complete"}

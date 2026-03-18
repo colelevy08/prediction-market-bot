@@ -32,6 +32,20 @@ class Config(BaseModel):
     max_open_positions: int = int(os.getenv("MAX_OPEN_POSITIONS", "10"))
     max_events_to_analyze: int = int(os.getenv("MAX_EVENTS_TO_ANALYZE", "20"))
 
+    # Kelly criterion
+    kelly_fraction: float = float(os.getenv("KELLY_FRACTION", "0.5"))  # Half-Kelly default
+
+    # Notifications
+    slack_webhook_url: str = os.getenv("SLACK_WEBHOOK_URL", "")
+    discord_webhook_url: str = os.getenv("DISCORD_WEBHOOK_URL", "")
+
+    # Webhook
+    webhook_secret: str = os.getenv("WEBHOOK_SECRET", "")
+
+    # Retrain schedule
+    retrain_days: str = os.getenv("RETRAIN_DAYS", "mon,wed,fri")
+    retrain_hour: int = int(os.getenv("RETRAIN_HOUR", "3"))
+
     @property
     def kalshi_base_url(self) -> str:
         if self.kalshi_use_demo:

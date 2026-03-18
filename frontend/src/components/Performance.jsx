@@ -16,10 +16,24 @@ function MetricCard({ label, value, sub, color = 'text-white', formula }) {
 export default function Performance() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [categoryData, setCategoryData] = useState({});
+  const [editingNote, setEditingNote] = useState(null);
+  const [noteText, setNoteText] = useState('');
 
   useEffect(() => {
-    api.getPerformance().then(setData).catch(() => {}).finally(() => setLoading(false));
+    Promise.all([
+      api.getPerformance().then(setData),
+      api.getPerformanceByCategory().then(d => setCategoryData(d.categories || {})),
+    ]).catch(() => {}).finally(() => setLoading(false));
   }, []);
+
+  const handleSaveNote = async (idx) => {
+    try {
+      await api.updateTradeNotes(idx, noteText);
+      setEditingNote(null);
+      api.getPerformance().then(setData);
+    } catch (e) { console.error(e); }
+  };
 
   if (loading) return <div className="text-text-secondary text-xs p-8 text-center">Loading...</div>;
 
@@ -93,9 +107,33 @@ export default function Performance() {
             </div>
           </div>
 
+          {/* Category P&L Breakdown */}
+          {Object.keys(categoryData).length > 0 && (
+            <div className="bg-card border border-border rounded-lg p-5">
+              <h3 className="text-[10px] uppercase tracking-widest text-text-secondary mb-4">P&L by Category</h3>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                {Object.entries(categoryData).map(([cat, m]) => (
+                  <div key={cat} className="bg-surface border border-border rounded-lg p-3">
+                    <div className="text-[10px] uppercase tracking-widest text-text-muted mb-1">{cat}</div>
+                    <div className={`text-lg font-bold font-mono ${m.total_pnl_cents >= 0 ? 'text-accent-green' : 'text-accent-red'}`}>
+                      ${(m.total_pnl_cents / 100).toFixed(2)}
+                    </div>
+                    <div className="text-[10px] text-text-secondary mt-1">
+                      {m.total_trades} trades · {(m.win_rate * 100).toFixed(0)}% WR
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="bg-card border border-border rounded-lg overflow-hidden">
-            <div className="px-5 py-3 border-b border-border">
+            <div className="px-5 py-3 border-b border-border flex items-center justify-between">
               <h3 className="text-[10px] uppercase tracking-widest text-text-secondary font-semibold">Trade History ({trades.length})</h3>
+              <button onClick={() => api.exportTradesCsv('paper')}
+                className="text-[10px] uppercase tracking-widest text-accent-green hover:text-white transition-colors">
+                Export CSV
+              </button>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
@@ -104,6 +142,7 @@ export default function Performance() {
                     <th className="text-left px-4 py-2">#</th>
                     <th className="text-left px-4 py-2">Ticker</th>
                     <th className="text-center px-4 py-2">Side</th>
+                    <th className="text-left px-4 py-2">Category</th>
                     <th className="text-right px-4 py-2">Entry</th>
                     <th className="text-right px-4 py-2">Exit</th>
                     <th className="text-right px-4 py-2">Log R</th>
@@ -111,6 +150,7 @@ export default function Performance() {
                     <th className="text-right px-4 py-2">MAE</th>
                     <th className="text-right px-4 py-2">MFE</th>
                     <th className="text-center px-4 py-2">Result</th>
+                    <th className="text-left px-4 py-2">Notes</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -119,6 +159,7 @@ export default function Performance() {
                       <td className="px-4 py-2 text-text-secondary font-mono">{i + 1}</td>
                       <td className="px-4 py-2 font-mono text-white">{t.ticker}</td>
                       <td className="px-4 py-2 text-center font-mono">{t.side?.toUpperCase()}</td>
+                      <td className="px-4 py-2 text-text-muted text-[10px]">{t.category || '--'}</td>
                       <td className="px-4 py-2 text-right font-mono">{(t.entry_price * 100).toFixed(0)}c</td>
                       <td className="px-4 py-2 text-right font-mono">{(t.exit_price * 100).toFixed(0)}c</td>
                       <td className="px-4 py-2 text-right font-mono">{t.log_return?.toFixed(4)}</td>
@@ -133,6 +174,20 @@ export default function Performance() {
                         <span className={`text-[10px] px-2 py-0.5 rounded font-semibold uppercase ${
                           t.won ? 'bg-accent-green/10 text-accent-green' : 'bg-accent-red/10 text-accent-red'
                         }`}>{t.won ? 'Win' : 'Loss'}</span>
+                      </td>
+                      <td className="px-4 py-2 max-w-[150px]">
+                        {editingNote === i ? (
+                          <div className="flex gap-1">
+                            <input value={noteText} onChange={e => setNoteText(e.target.value)}
+                              className="bg-surface border border-border rounded px-1.5 py-0.5 text-[10px] text-white w-20 focus:outline-none focus:border-accent-green" />
+                            <button onClick={() => handleSaveNote(i)} className="text-accent-green text-[10px]">Save</button>
+                          </div>
+                        ) : (
+                          <span onClick={() => { setEditingNote(i); setNoteText(t.notes || ''); }}
+                            className="text-[10px] text-text-muted cursor-pointer hover:text-white truncate block">
+                            {t.notes || 'Add note...'}
+                          </span>
+                        )}
                       </td>
                     </tr>
                   ))}

@@ -13,13 +13,26 @@ export default function Settings({ status, onRefresh }) {
   const [autoTrade, setAutoTrade] = useState(false);
   const [scanInterval, setScanInterval] = useState(60);
   const [scanLog, setScanLog] = useState([]);
+  const [notifConfig, setNotifConfig] = useState({});
+  const [notifTestResult, setNotifTestResult] = useState('');
+  const [retrainSchedule, setRetrainSchedule] = useState({ days: 'mon,wed,fri', hour: 3, active: false, next_run: null });
+  const [retrainDays, setRetrainDays] = useState('mon,wed,fri');
+  const [retrainHour, setRetrainHour] = useState(3);
 
   useEffect(() => {
-    api.getAutoScanStatus().then(s => {
-      setAutoScan(s.auto_scan_enabled || false);
-      setAutoTrade(s.auto_trade_enabled || false);
-      setScanLog(s.log || []);
-    }).catch(() => {});
+    Promise.all([
+      api.getAutoScanStatus().then(s => {
+        setAutoScan(s.auto_scan_enabled || false);
+        setAutoTrade(s.auto_trade_enabled || false);
+        setScanLog(s.log || []);
+      }),
+      api.getNotificationConfig().then(setNotifConfig).catch(() => {}),
+      api.getRetrainSchedule().then(s => {
+        setRetrainSchedule(s);
+        setRetrainDays(s.days || 'mon,wed,fri');
+        setRetrainHour(s.hour || 3);
+      }).catch(() => {}),
+    ]).catch(() => {});
   }, []);
 
   const handleSave = async () => {
@@ -152,6 +165,82 @@ export default function Settings({ status, onRefresh }) {
               </div>
             </div>
           )}
+        </div>
+      </div>
+
+      {/* Notifications */}
+      <div className="bg-card border border-border rounded-lg p-5">
+        <h3 className="text-[10px] uppercase tracking-widest text-text-secondary font-semibold mb-4">Notifications</h3>
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs">Slack</span>
+            <span className={`text-[10px] px-2.5 py-1 rounded font-semibold uppercase tracking-wide ${
+              notifConfig.slack_configured ? 'bg-accent-green/10 text-accent-green' : 'bg-white/5 text-text-muted'
+            }`}>{notifConfig.slack_configured ? 'Configured' : 'Not Set'}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-xs">Discord</span>
+            <span className={`text-[10px] px-2.5 py-1 rounded font-semibold uppercase tracking-wide ${
+              notifConfig.discord_configured ? 'bg-accent-green/10 text-accent-green' : 'bg-white/5 text-text-muted'
+            }`}>{notifConfig.discord_configured ? 'Configured' : 'Not Set'}</span>
+          </div>
+          <p className="text-[10px] text-text-muted">Set SLACK_WEBHOOK_URL and/or DISCORD_WEBHOOK_URL in .env</p>
+          <div className="flex gap-2">
+            <button onClick={async () => {
+              try {
+                const r = await api.testNotifications();
+                setNotifTestResult(r.status === 'sent' ? 'Test sent!' : 'Not configured');
+                setTimeout(() => setNotifTestResult(''), 3000);
+              } catch (e) { setNotifTestResult('Failed'); }
+            }}
+              className="px-3 py-1.5 bg-white/5 text-text-secondary text-[10px] font-semibold uppercase tracking-wide rounded hover:bg-white/10 transition-all">
+              Test Notifications
+            </button>
+            {notifTestResult && <span className="text-[10px] text-accent-green self-center">{notifTestResult}</span>}
+          </div>
+        </div>
+      </div>
+
+      {/* Retrain Schedule */}
+      <div className="bg-card border border-border rounded-lg p-5">
+        <h3 className="text-[10px] uppercase tracking-widest text-text-secondary font-semibold mb-4">Model Retrain Schedule</h3>
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs">Status</span>
+            <span className={`text-[10px] px-2.5 py-1 rounded font-semibold uppercase tracking-wide ${
+              retrainSchedule.active ? 'bg-accent-green/10 text-accent-green' : 'bg-white/5 text-text-muted'
+            }`}>{retrainSchedule.active ? 'Active' : 'Inactive'}</span>
+          </div>
+          {retrainSchedule.next_run && (
+            <div className="text-[10px] text-text-secondary">Next: {new Date(retrainSchedule.next_run).toLocaleString()}</div>
+          )}
+          <div>
+            <label className="text-[10px] uppercase tracking-widest text-text-secondary block mb-1">Days (comma-separated)</label>
+            <input type="text" value={retrainDays} onChange={e => setRetrainDays(e.target.value)}
+              placeholder="mon,wed,fri"
+              className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm font-mono text-white focus:border-accent-green focus:outline-none transition-colors" />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-widest text-text-secondary block mb-1">Hour (0-23 UTC)</label>
+            <input type="number" min={0} max={23} value={retrainHour} onChange={e => setRetrainHour(parseInt(e.target.value) || 0)}
+              className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm font-mono text-white focus:border-accent-green focus:outline-none transition-colors" />
+          </div>
+          <div className="flex gap-2">
+            <button onClick={async () => {
+              await api.updateRetrainSchedule(retrainDays, retrainHour);
+              const s = await api.getRetrainSchedule();
+              setRetrainSchedule(s);
+            }}
+              className="px-3 py-1.5 bg-white text-black text-[10px] font-semibold uppercase tracking-wide rounded hover:bg-gray-200 transition-all">
+              Update Schedule
+            </button>
+            <button onClick={async () => {
+              try { await api.retrainNow(); alert('Retrain complete!'); } catch (e) { alert(`Retrain failed: ${e.message}`); }
+            }}
+              className="px-3 py-1.5 bg-accent-green/10 text-accent-green text-[10px] font-semibold uppercase tracking-wide rounded hover:bg-accent-green/20 transition-all">
+              Retrain Now
+            </button>
+          </div>
         </div>
       </div>
 

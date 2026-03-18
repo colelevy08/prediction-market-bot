@@ -48,6 +48,8 @@ class Database:
             "won": trade.won,
             "entry_time": trade.entry_time or datetime.now(timezone.utc).isoformat(),
             "exit_time": trade.exit_time or datetime.now(timezone.utc).isoformat(),
+            "category": getattr(trade, "category", ""),
+            "notes": getattr(trade, "notes", ""),
         }).execute()
 
     def get_trades(self, mode: str | None = None, limit: int = 100) -> list[dict]:

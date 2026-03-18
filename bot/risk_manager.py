@@ -49,12 +49,50 @@ class RiskManager:
 
         return True, "OK"
 
-    def build_order(self, signal: TradingSignal) -> OrderRequest:
+    def kelly_size(self, signal: TradingSignal, bankroll_cents: int) -> int:
+        """
+        Calculate position size using Kelly criterion.
+
+        Kelly fraction: f* = (bp - q) / b
+        where b = payout odds, p = model probability, q = 1 - p
+
+        We use fractional Kelly (default half-Kelly) to reduce volatility.
+        """
+        p = signal.fair_probability
+        q = 1 - p
+        market_price = signal.market_probability
+
+        if market_price <= 0 or market_price >= 1 or p <= 0:
+            return signal.recommended_size_cents
+
+        # Odds: if you buy at market_price, you get 1.0 if correct
+        b = (1.0 - market_price) / market_price  # payout ratio
+
+        if b <= 0:
+            return 0
+
+        kelly_f = (b * p - q) / b
+        kelly_f = max(0, kelly_f)  # Never go negative
+
+        # Apply fractional Kelly
+        kelly_f *= config.kelly_fraction
+
+        # Cap at max bet
+        size = min(int(kelly_f * bankroll_cents), config.max_bet_amount_cents)
+        return max(0, size)
+
+    def build_order(self, signal: TradingSignal, bankroll_cents: int = 0) -> OrderRequest:
         """Convert a validated signal into an order request."""
         # For limit orders, use the current ask price
         price = int(signal.market_probability * 100) if signal.side.value == "yes" else int((1 - signal.market_probability) * 100)
-        # Contracts = total_risk / price_per_contract
-        count = max(1, signal.recommended_size_cents // max(price, 1))
+
+        # Use Kelly sizing if bankroll provided, otherwise fallback to recommended size
+        if bankroll_cents > 0:
+            size = self.kelly_size(signal, bankroll_cents)
+        else:
+            size = signal.recommended_size_cents
+
+        count = max(1, size // max(price, 1))
 
         return OrderRequest(
             ticker=signal.ticker,
