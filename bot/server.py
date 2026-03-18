@@ -37,6 +37,7 @@ import asyncio
 import csv
 import io
 import logging
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -46,7 +47,7 @@ from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from bot.config import config
 from bot.kalshi_client import KalshiClient
@@ -85,6 +86,7 @@ notifier: Notifier | None = None            # Slack/Discord webhook notification
 # This avoids re-scanning Kalshi on every frontend poll. The cache is updated
 # by _auto_scan_job() (background) and run_scan() (on-demand).
 # Logs are trimmed to 500 entries max to prevent unbounded memory growth.
+_cache_lock = asyncio.Lock()
 _cache: dict[str, Any] = {
     "events": [],               # Latest event data from Kalshi
     "signals": [],              # Latest validated trading signals (RF + AI)
@@ -132,6 +134,8 @@ async def _auto_scan_job():
         # using real market data without placing actual orders on Kalshi.
         paper_entries = []
         paper_exits = []
+        _pending_paper = []
+        _pending_scan = []
         if paper_trader and paper_trader.generator.model.is_trained:
             result = paper_trader.scan_and_trade(events)
             paper_trader.save_state()
@@ -139,11 +143,11 @@ async def _auto_scan_job():
             paper_exits = result.get("exits", [])
             open_pos = result.get("open_positions", 0)
 
-            # Log each shadow trade individually
+            # Collect shadow trade log entries (flushed under lock below)
+            _pending_paper = []
             for entry in paper_entries:
-                _cache["paper_trade_log"].append({
-                    "time": now,
-                    "action": "entry",
+                _pending_paper.append({
+                    "time": now, "action": "entry",
                     "ticker": entry.get("ticker", ""),
                     "side": entry.get("side", ""),
                     "price": entry.get("entry_price", 0),
@@ -152,9 +156,8 @@ async def _auto_scan_job():
                     "edge": entry.get("edge", 0),
                 })
             for ex in paper_exits:
-                _cache["paper_trade_log"].append({
-                    "time": now,
-                    "action": "exit",
+                _pending_paper.append({
+                    "time": now, "action": "exit",
                     "ticker": ex.get("ticker", ""),
                     "side": ex.get("side", ""),
                     "entry_price": ex.get("entry_price", 0),
@@ -169,7 +172,7 @@ async def _auto_scan_job():
                 "entries": len(paper_entries), "exits": len(paper_exits),
                 "open_positions": open_pos,
             }
-            _cache["auto_scan_log"].append(scan_entry)
+            _pending_scan = [scan_entry]
             if db:
                 db.insert_scan_log("paper", len(paper_entries) + len(paper_exits), len(paper_entries), len(paper_exits), open_pos)
 
@@ -177,6 +180,7 @@ async def _auto_scan_job():
         # Live trading is a separate opt-in: auto_scan must be on AND auto_trade
         # must be explicitly toggled. This two-step design prevents accidental
         # real-money trades when the user only wants paper trading.
+        _pending_live = []
         if _cache.get("auto_trade_enabled") and rf_generator and risk_manager:
             rf_signals = rf_generator.generate_signals(events)
             portfolio = kalshi.get_portfolio_summary()
@@ -195,7 +199,7 @@ async def _auto_scan_job():
                     )
                     kalshi.place_order(order)
                     risk_manager.record_trade()
-                    _cache["live_trade_log"].append({
+                    _pending_live.append({
                         "time": now, "action": "exit",
                         "ticker": sig.ticker, "side": sig.side.value,
                         "price": int(sig.market_probability * 100),
@@ -213,7 +217,7 @@ async def _auto_scan_job():
                     order = risk_manager.build_order(sig)
                     kalshi.place_order(order)
                     risk_manager.record_trade()
-                    _cache["live_trade_log"].append({
+                    _pending_live.append({
                         "time": now, "action": "entry",
                         "ticker": sig.ticker, "side": sig.side.value,
                         "price": order.price_cents,
@@ -226,7 +230,7 @@ async def _auto_scan_job():
                 except Exception as e:
                     logger.error(f"Auto-entry failed for {sig.ticker}: {e}")
 
-            _cache["auto_scan_log"].append({
+            _pending_scan.append({
                 "time": now, "type": "live",
                 "events_scanned": total_events,
                 "markets_scanned": total_markets,
@@ -234,15 +238,18 @@ async def _auto_scan_job():
                 "exits": len(exit_signals),
             })
 
-        # Update cache
-        _cache["last_scan"] = now
+        # Flush all pending log entries under lock (serializes with API endpoint reads)
+        async with _cache_lock:
+            _cache["paper_trade_log"].extend(_pending_paper)
+            _cache["live_trade_log"].extend(_pending_live)
+            _cache["auto_scan_log"].extend(_pending_scan)
+            _cache["last_scan"] = now
+            # Trim logs to prevent unbounded memory growth — keep only the most recent 500 entries
+            for key in ("auto_scan_log", "paper_trade_log", "live_trade_log"):
+                if len(_cache[key]) > 500:
+                    _cache[key] = _cache[key][-500:]
         elapsed = (datetime.now(timezone.utc) - scan_start).total_seconds()
         logger.info(f"Scan complete: {total_events} events, {total_markets} markets in {elapsed:.1f}s | paper: +{len(paper_entries)}/-{len(paper_exits)}")
-
-        # Trim logs to prevent unbounded memory growth — keep only the most recent 500 entries
-        for key in ("auto_scan_log", "paper_trade_log", "live_trade_log"):
-            if len(_cache[key]) > 500:
-                _cache[key] = _cache[key][-500:]
 
     except Exception as e:
         logger.error(f"Auto-scan failed: {e}")
@@ -366,10 +373,11 @@ app = FastAPI(title="Prediction Market Bot", version="1.0.0", lifespan=lifespan)
 # CORS middleware allows the React frontend (on Vercel/localhost:5173) to call
 # this backend (on Railway/localhost:8000). allow_origins=["*"] is permissive;
 # tighten this in production to the actual frontend domain.
+_cors_origins = os.getenv("CORS_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=len(_cors_origins) == 1 and _cors_origins[0] != "*",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -394,12 +402,12 @@ class TradeRequest(BaseModel):
 
 class ConfigUpdate(BaseModel):
     """Request body for PATCH /api/config (partial config update)."""
-    max_bet_amount_cents: int | None = None
-    min_edge_threshold: float | None = None
-    max_daily_loss_cents: int | None = None
-    max_open_positions: int | None = None
-    max_events_to_analyze: int | None = None
-    kelly_fraction: float | None = None
+    max_bet_amount_cents: int | None = Field(None, gt=0, le=1_000_00)
+    min_edge_threshold: float | None = Field(None, gt=0, le=1.0)
+    max_daily_loss_cents: int | None = Field(None, gt=0, le=100_000_00)
+    max_open_positions: int | None = Field(None, gt=0, le=100)
+    max_events_to_analyze: int | None = Field(None, gt=0, le=500)
+    kelly_fraction: float | None = Field(None, gt=0, le=1.0)
 
 
 # ── API Endpoints ────────────────────────────────────────────────────────────
@@ -504,17 +512,17 @@ async def run_scan(req: ScanRequest):
         raise HTTPException(400, "Kalshi not connected")
 
     try:
-        # Fetch ALL events from Kalshi
-        events = kalshi.get_all_events()
+        # Fetch ALL events from Kalshi (run in thread to avoid blocking event loop)
+        events = await asyncio.to_thread(kalshi.get_all_events)
         total_markets = sum(len(e.markets) for e in events)
 
-        # Generate RF signals (guide logic)
-        rf_signals = rf_generator.generate_signals(events) if rf_generator else []
+        # Generate RF signals (run in thread — CPU-bound ML inference)
+        rf_signals = await asyncio.to_thread(rf_generator.generate_signals, events) if rf_generator else []
 
-        # Optionally enhance with Claude AI
+        # Optionally enhance with Claude AI (run in thread — blocking HTTP calls)
         ai_signals = []
         if req.use_ai and ai_analyzer:
-            ai_signals = ai_analyzer.analyze_events(events)
+            ai_signals = await asyncio.to_thread(ai_analyzer.analyze_events, events)
 
         # Check exit signals for open positions
         positions = kalshi.get_positions()
@@ -539,11 +547,12 @@ async def run_scan(req: ScanRequest):
             sig_dict["source"] = "claude_ai"
             validated_signals.append(sig_dict)
 
-        # Cache results
-        _cache["events"] = [e.model_dump() for e in events]
-        _cache["signals"] = validated_signals
-        _cache["exit_signals"] = [s.model_dump() for s in exit_signals]
-        _cache["last_scan"] = datetime.now(timezone.utc).isoformat()
+        # Cache results (lock serializes with background auto-scan writes)
+        async with _cache_lock:
+            _cache["events"] = [e.model_dump() for e in events]
+            _cache["signals"] = validated_signals
+            _cache["exit_signals"] = [s.model_dump() for s in exit_signals]
+            _cache["last_scan"] = datetime.now(timezone.utc).isoformat()
 
         return {
             "events_scanned": len(events),
@@ -703,7 +712,10 @@ async def get_feature_importance():
     """Get Random Forest feature importance rankings."""
     if not rf_generator:
         return {"features": {}, "feature_names": FEATURE_NAMES}
-    importance = rf_generator.model.get_feature_importance()
+    try:
+        importance = rf_generator.model.get_feature_importance()
+    except Exception:
+        importance = {}
     return {
         "features": importance,
         "feature_names": FEATURE_NAMES,
@@ -776,14 +788,14 @@ async def update_config(update: ConfigUpdate):
 
 class BacktestRequest(BaseModel):
     """Request body for POST /api/backtest (single backtest run)."""
-    initial_balance_cents: int = 100_00   # Starting paper balance ($100)
-    max_bet_cents: int = 25_00            # Max bet per trade ($25)
-    entry_threshold: float = 0.5          # Entry: market <= model * threshold
-    exit_threshold: float = 0.9           # Exit: market >= model * threshold
-    min_confidence: float = 0.70          # Minimum model confidence to trade
-    min_volume: int = 50                  # Minimum market volume to consider
-    train_ratio: float = 0.6             # 60% train / 40% test split
-    max_markets: int = 200                # Max settled markets to fetch from Kalshi
+    initial_balance_cents: int = Field(100_00, gt=0, le=1_000_000_00)
+    max_bet_cents: int = Field(25_00, gt=0, le=100_000_00)
+    entry_threshold: float = Field(0.5, gt=0, le=1.0)
+    exit_threshold: float = Field(0.9, gt=0, le=1.0)
+    min_confidence: float = Field(0.70, ge=0, le=1.0)
+    min_volume: int = Field(50, ge=0, le=100_000)
+    train_ratio: float = Field(0.6, gt=0, lt=1.0)
+    max_markets: int = Field(200, gt=0, le=10_000)
 
 
 class SweepRequest(BaseModel):
@@ -1157,15 +1169,23 @@ async def receive_webhook(
     if payload.action == "scan":
         if not kalshi or not config.validate_kalshi():
             raise HTTPException(400, "Kalshi not connected")
-        events = kalshi.get_all_events()
-        if paper_trader and paper_trader.generator.model.is_trained:
-            result = paper_trader.scan_and_trade(events)
-            return {"action": "scan", "result": result}
-        return {"action": "scan", "result": "model not trained"}
+        try:
+            events = kalshi.get_all_events()
+            if paper_trader and paper_trader.generator.model.is_trained:
+                result = paper_trader.scan_and_trade(events)
+                return {"action": "scan", "result": result}
+            return {"action": "scan", "result": "model not trained"}
+        except Exception as e:
+            logger.error(f"Webhook scan failed: {e}")
+            raise HTTPException(500, f"Scan failed: {e}")
 
     elif payload.action == "retrain":
-        await _retrain_job()
-        return {"action": "retrain", "status": "completed"}
+        try:
+            await _retrain_job()
+            return {"action": "retrain", "status": "completed"}
+        except Exception as e:
+            logger.error(f"Webhook retrain failed: {e}")
+            raise HTTPException(500, f"Retrain failed: {e}")
 
     raise HTTPException(400, f"Unknown action: {payload.action}")
 
@@ -1201,6 +1221,8 @@ async def export_trades_csv(source: str = "paper"):
     P&L, log return, MAE/MFE, etc.) and returns it as a streaming response
     with a Content-Disposition header for browser download.
     """
+    if source not in ("paper", "live"):
+        raise HTTPException(400, "source must be 'paper' or 'live'")
     trades = []
     if source == "paper" and paper_trader:
         trades = paper_trader.tracker.get_trade_history()

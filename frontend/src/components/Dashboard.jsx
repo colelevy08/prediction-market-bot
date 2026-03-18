@@ -98,7 +98,7 @@ export default function Dashboard({ status, scanResult, onScan, scanning }) {
   return (
     <div className="space-y-5 animate-fade-in">
       {lastUpdated && (
-        <div className="text-[10px] text-text-muted text-right">{formatRelativeTime(lastUpdated)}</div>
+        <div className="text-[10px] text-text-muted text-right" role="status" aria-live="polite">{formatRelativeTime(lastUpdated)}</div>
       )}
       {/* Strategy overview */}
       <div className="card p-5">

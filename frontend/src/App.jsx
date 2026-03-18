@@ -113,7 +113,7 @@ export default function App() {
                 { label: `RF(${status?.model?.n_features || 0})`, ok: status?.model?.is_trained },
                 status?.supabase_connected && { label: 'DB', ok: true },
               ].filter(Boolean).map((item, i) => (
-                <div key={i} className="flex items-center gap-1.5">
+                <div key={i} className="flex items-center gap-1.5" role="status" aria-label={`${item.label} ${item.ok ? 'connected' : 'disconnected'}`}>
                   <span className={`w-1.5 h-1.5 rounded-full ${item.ok ? 'bg-accent-green pulse-dot' : 'bg-accent-red'}`} />
                   <span className={`text-[10px] font-medium tracking-wide ${item.ok ? 'text-text-secondary' : 'text-text-muted'}`}>
                     {item.label}
@@ -128,6 +128,7 @@ export default function App() {
             {/* Theme toggle */}
             <button
               onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
+              aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
               className="w-8 h-8 rounded-lg bg-surface-2 border border-border hover:bg-card-hover flex items-center justify-center transition-all text-text-secondary text-sm"
             >
               {theme === 'dark' ? '☀' : '☾'}
@@ -149,6 +150,7 @@ export default function App() {
             {/* Mobile hamburger */}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'}
               className="md:hidden w-8 h-8 rounded-lg bg-surface-2 border border-border flex items-center justify-center text-text-secondary text-sm"
             >
               {mobileMenuOpen ? '✕' : '☰'}

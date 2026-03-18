@@ -520,6 +520,8 @@ export default function Testing() {
                   <span className="text-text-secondary text-xs">$</span>
                   <input
                     type="number"
+                    step="0.01"
+                    min="0.01"
                     placeholder="Custom"
                     value={customFunds}
                     onChange={e => setCustomFunds(e.target.value)}

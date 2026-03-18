@@ -37,7 +37,18 @@ export default function Portfolio() {
   };
 
   if (loading) return (
-    <div className="text-text-muted text-xs p-12 text-center animate-pulse">Loading portfolio...</div>
+    <div className="card overflow-hidden">
+      <div className="space-y-0">
+        {[...Array(5)].map((_, i) => (
+          <div key={i} className="flex items-center gap-4 px-4 py-3 border-b border-border last:border-0 animate-pulse">
+            <div className="h-3 w-16 bg-surface-2 rounded" />
+            <div className="h-3 w-32 bg-surface-2 rounded" />
+            <div className="h-3 w-12 bg-surface-2 rounded ml-auto" />
+            <div className="h-3 w-12 bg-surface-2 rounded" />
+          </div>
+        ))}
+      </div>
+    </div>
   );
 
   if (fetchError) return (

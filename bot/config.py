@@ -35,6 +35,22 @@ from pydantic import BaseModel
 load_dotenv(override=True)
 
 
+def _safe_int(key: str, default: int) -> int:
+    """Parse an env var as int, falling back to default on invalid values."""
+    try:
+        return int(os.getenv(key, str(default)))
+    except (ValueError, TypeError):
+        return default
+
+
+def _safe_float(key: str, default: float) -> float:
+    """Parse an env var as float, falling back to default on invalid values."""
+    try:
+        return float(os.getenv(key, str(default)))
+    except (ValueError, TypeError):
+        return default
+
+
 class Config(BaseModel):
     """Central configuration object loaded from environment variables (.env file).
 
@@ -56,14 +72,14 @@ class Config(BaseModel):
     supabase_key: str = os.getenv("SUPABASE_KEY", "")  # Supabase service role key
 
     # ── Trading Parameters ────────────────────────────────────────────────────
-    max_bet_amount_cents: int = int(os.getenv("MAX_BET_AMOUNT_CENTS", "2500"))     # $25 max per trade
-    min_edge_threshold: float = float(os.getenv("MIN_EDGE_THRESHOLD", "0.08"))     # 8% minimum edge to trade
-    max_daily_loss_cents: int = int(os.getenv("MAX_DAILY_LOSS_CENTS", "10000"))    # $100 daily loss limit
-    max_open_positions: int = int(os.getenv("MAX_OPEN_POSITIONS", "10"))            # Max simultaneous positions
-    max_events_to_analyze: int = int(os.getenv("MAX_EVENTS_TO_ANALYZE", "20"))     # Events per on-demand scan
+    max_bet_amount_cents: int = _safe_int("MAX_BET_AMOUNT_CENTS", 2500)     # $25 max per trade
+    min_edge_threshold: float = _safe_float("MIN_EDGE_THRESHOLD", 0.08)     # 8% minimum edge to trade
+    max_daily_loss_cents: int = _safe_int("MAX_DAILY_LOSS_CENTS", 10000)    # $100 daily loss limit
+    max_open_positions: int = _safe_int("MAX_OPEN_POSITIONS", 10)            # Max simultaneous positions
+    max_events_to_analyze: int = _safe_int("MAX_EVENTS_TO_ANALYZE", 20)     # Events per on-demand scan
 
     # ── Kelly Criterion ───────────────────────────────────────────────────────
-    kelly_fraction: float = float(os.getenv("KELLY_FRACTION", "0.5"))  # Half-Kelly to reduce variance
+    kelly_fraction: float = min(1.0, max(0.01, _safe_float("KELLY_FRACTION", 0.5)))  # Half-Kelly, clamped [0.01, 1.0]
 
     # ── Notification Webhooks ─────────────────────────────────────────────────
     slack_webhook_url: str = os.getenv("SLACK_WEBHOOK_URL", "")
@@ -74,7 +90,7 @@ class Config(BaseModel):
 
     # ── Model Retrain Schedule ────────────────────────────────────────────────
     retrain_days: str = os.getenv("RETRAIN_DAYS", "mon,wed,fri")  # APScheduler cron day_of_week
-    retrain_hour: int = int(os.getenv("RETRAIN_HOUR", "3"))       # Hour in UTC
+    retrain_hour: int = min(23, max(0, _safe_int("RETRAIN_HOUR", 3)))  # Hour in UTC, clamped [0, 23]
 
     @property
     def kalshi_base_url(self) -> str:

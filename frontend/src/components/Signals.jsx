@@ -12,6 +12,8 @@ export default function Signals({ scanResult, onScan, scanning }) {
   const [exitSignals, setExitSignals] = useState([]);
   const [trading, setTrading] = useState({});
   const [filter, setFilter] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortBy, setSortBy] = useState('edge');
 
   useEffect(() => {
     if (scanResult) {
@@ -30,6 +32,15 @@ export default function Signals({ scanResult, onScan, scanning }) {
     if (filter === 'rf') return s.source === 'random_forest';
     if (filter === 'ai') return s.source === 'claude_ai';
     return true;
+  }).filter(s => {
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    return (s.ticker || '').toLowerCase().includes(q) || (s.market_title || '').toLowerCase().includes(q);
+  }).sort((a, b) => {
+    if (sortBy === 'edge') return (b.edge || 0) - (a.edge || 0);
+    if (sortBy === 'confidence') return (b.confidence || 0) - (a.confidence || 0);
+    if (sortBy === 'price') return (a.market_probability || 0) - (b.market_probability || 0);
+    return 0;
   });
 
   const handleTrade = async (signal) => {
@@ -60,20 +71,34 @@ export default function Signals({ scanResult, onScan, scanning }) {
         </div>
 
         {/* Filter pills */}
-        <div className="flex items-center gap-0.5 bg-surface-2 border border-border rounded-lg p-0.5">
-          {[['all', 'All'], ['ready', 'Ready'], ['rf', 'RF'], ['ai', 'AI']].map(([id, label]) => (
-            <button
-              key={id}
-              onClick={() => setFilter(id)}
-              className={`px-3 py-1.5 text-[10px] font-semibold tracking-wide uppercase rounded-md transition-all ${
-                filter === id
-                  ? 'bg-accent-green text-black'
-                  : 'text-text-muted hover:text-text-secondary'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-0.5 bg-surface-2 border border-border rounded-lg p-0.5">
+            {[['all', 'All'], ['ready', 'Ready'], ['rf', 'RF'], ['ai', 'AI']].map(([id, label]) => (
+              <button
+                key={id}
+                onClick={() => setFilter(id)}
+                className={`px-3 py-1.5 text-[10px] font-semibold tracking-wide uppercase rounded-md transition-all ${
+                  filter === id
+                    ? 'bg-accent-green text-black'
+                    : 'text-text-muted hover:text-text-secondary'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder="Search signals..."
+            className="input w-auto py-1.5 text-xs"
+          />
+          <select value={sortBy} onChange={e => setSortBy(e.target.value)} className="input w-auto py-1.5 text-xs">
+            <option value="edge">Sort: Edge</option>
+            <option value="confidence">Sort: Confidence</option>
+            <option value="price">Sort: Price (low)</option>
+          </select>
         </div>
       </div>
 
@@ -89,8 +114,9 @@ export default function Signals({ scanResult, onScan, scanning }) {
         </div>
 
         {filteredSignals.length === 0 ? (
-          <div className="p-10 text-center text-text-muted text-xs">
-            No signals. Run a scan to analyze markets.
+          <div className="p-10 text-center space-y-2">
+            <div className="text-text-muted text-xs">No entry signals found.</div>
+            <div className="text-[10px] text-text-muted">Run a scan from the header bar to analyze markets for opportunities where market price &le; model probability &times; 0.5</div>
           </div>
         ) : (
           <div className="overflow-x-auto">

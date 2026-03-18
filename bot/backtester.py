@@ -169,7 +169,7 @@ class TrainingDataStore:
             "saved_at": datetime.now(timezone.utc).isoformat(),
             "samples": list(self.samples.values()),
         }
-        self.path.write_text(json.dumps(data))
+        self.path.write_text(json.dumps(data, default=str))
 
     def _save_to_db(self, new_samples: list[dict]):
         """Batch-insert new samples to Supabase (best-effort)."""
@@ -951,7 +951,7 @@ class PaperTrader:
             "equity_curve": self.tracker.get_equity_curve(),
             "saved_at": datetime.now(timezone.utc).isoformat(),
         }
-        path.write_text(json.dumps(state, indent=2))
+        path.write_text(json.dumps(state, indent=2, default=str))
 
     def load_state(self, path: Path | None = None) -> bool:
         """Load paper trading state from DB or JSON file. Returns True if loaded."""

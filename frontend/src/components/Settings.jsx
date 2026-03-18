@@ -62,6 +62,7 @@ export default function Settings({ status, onRefresh }) {
   const [saved, setSaved] = useState(false);
   const [autoScan, setAutoScan] = useState(false);
   const [autoTrade, setAutoTrade] = useState(false);
+  const [confirmAutoTrade, setConfirmAutoTrade] = useState(false);
   const [scanInterval, setScanInterval] = useState(60);
   const [scanLog, setScanLog] = useState([]);
   const [notifConfig, setNotifConfig] = useState({});
@@ -373,23 +374,36 @@ export default function Settings({ status, onRefresh }) {
                 <span className="text-xs font-semibold">Auto-Trade (Live)</span>
                 <p className="text-[10px] text-accent-red mt-0.5">Executes real trades on Kalshi -- use with caution</p>
               </div>
-              <button
-                onClick={async () => {
-                  if (!autoTrade && !confirm('This will place REAL trades on Kalshi. Continue?')) return;
-                  try {
-                    const next = !autoTrade;
-                    await api.toggleAutoTrade(next);
-                    setAutoTrade(next);
-                  } catch (e) { toast.error(`Toggle failed: ${e.message}`); }
-                }}
-                className={`relative w-12 h-6 rounded-full transition-colors duration-200 focus:outline-none ${
-                  autoTrade ? 'bg-accent-red' : 'bg-text-muted/30'
-                }`}
-              >
-                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${
-                  autoTrade ? 'translate-x-6' : 'translate-x-0'
-                }`} />
-              </button>
+              {confirmAutoTrade ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-accent-red font-semibold">Place REAL trades?</span>
+                  <button onClick={async () => {
+                    setConfirmAutoTrade(false);
+                    try {
+                      await api.toggleAutoTrade(true);
+                      setAutoTrade(true);
+                    } catch (e) { toast.error(`Toggle failed: ${e.message}`); }
+                  }} className="btn-ghost text-accent-green text-[10px]">Confirm</button>
+                  <button onClick={() => setConfirmAutoTrade(false)} className="btn-ghost text-text-muted text-[10px]">Cancel</button>
+                </div>
+              ) : (
+                <button
+                  onClick={async () => {
+                    if (!autoTrade) { setConfirmAutoTrade(true); return; }
+                    try {
+                      await api.toggleAutoTrade(false);
+                      setAutoTrade(false);
+                    } catch (e) { toast.error(`Toggle failed: ${e.message}`); }
+                  }}
+                  className={`relative w-12 h-6 rounded-full transition-colors duration-200 focus:outline-none ${
+                    autoTrade ? 'bg-accent-red' : 'bg-text-muted/30'
+                  }`}
+                >
+                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${
+                    autoTrade ? 'translate-x-6' : 'translate-x-0'
+                  }`} />
+                </button>
+              )}
             </div>
 
             {/* Scan Log */}

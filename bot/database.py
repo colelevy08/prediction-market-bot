@@ -33,8 +33,11 @@ TrainingDataStore sync), bot.performance (trade insertion).
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 try:
     from supabase import create_client, Client
@@ -80,25 +83,28 @@ class Database:
         """
         if not self.client:
             return
-        self.client.table("trades").insert({
-            "mode": mode,
-            "ticker": trade.ticker,
-            "side": trade.side,
-            "entry_price": trade.entry_price,
-            "exit_price": trade.exit_price,
-            "contracts": trade.contracts,
-            "pnl_cents": trade.pnl_cents,
-            "log_return": trade.log_return,
-            "mae": trade.mae,
-            "mfe": trade.mfe,
-            "model_probability": trade.model_probability,
-            "market_probability_at_entry": trade.market_probability_at_entry,
-            "won": trade.won,
-            "entry_time": trade.entry_time or datetime.now(timezone.utc).isoformat(),
-            "exit_time": trade.exit_time or datetime.now(timezone.utc).isoformat(),
-            "category": getattr(trade, "category", ""),
-            "notes": getattr(trade, "notes", ""),
-        }).execute()
+        try:
+            self.client.table("trades").insert({
+                "mode": mode,
+                "ticker": trade.ticker,
+                "side": trade.side,
+                "entry_price": trade.entry_price,
+                "exit_price": trade.exit_price,
+                "contracts": trade.contracts,
+                "pnl_cents": trade.pnl_cents,
+                "log_return": trade.log_return,
+                "mae": trade.mae,
+                "mfe": trade.mfe,
+                "model_probability": trade.model_probability,
+                "market_probability_at_entry": trade.market_probability_at_entry,
+                "won": trade.won,
+                "entry_time": trade.entry_time or datetime.now(timezone.utc).isoformat(),
+                "exit_time": trade.exit_time or datetime.now(timezone.utc).isoformat(),
+                "category": getattr(trade, "category", ""),
+                "notes": getattr(trade, "notes", ""),
+            }).execute()
+        except Exception as e:
+            logger.error(f"Failed to insert trade {trade.ticker}: {e}")
 
     def get_trades(self, mode: str | None = None, limit: int = 100) -> list[dict]:
         """Fetch recent trades from the 'trades' table, ordered by most recent first.
@@ -118,9 +124,12 @@ class Database:
         """Update notes on a trade identified by ticker + entry_time."""
         if not self.client:
             return
-        self.client.table("trades").update(
-            {"notes": notes}
-        ).eq("ticker", ticker).eq("entry_time", entry_time).execute()
+        try:
+            self.client.table("trades").update(
+                {"notes": notes}
+            ).eq("ticker", ticker).eq("entry_time", entry_time).execute()
+        except Exception as e:
+            logger.error(f"Failed to update trade notes for {ticker}: {e}")
 
     # ── Scan Logs ────────────────────────────────────────────────
 
@@ -138,13 +147,16 @@ class Database:
         """
         if not self.client:
             return
-        self.client.table("scan_logs").insert({
-            "scan_type": scan_type,
-            "signals_found": signals,
-            "entries": entries,
-            "exits": exits,
-            "open_positions": open_positions,
-        }).execute()
+        try:
+            self.client.table("scan_logs").insert({
+                "scan_type": scan_type,
+                "signals_found": signals,
+                "entries": entries,
+                "exits": exits,
+                "open_positions": open_positions,
+            }).execute()
+        except Exception as e:
+            logger.error(f"Failed to insert scan log: {e}")
 
     def get_scan_logs(self, limit: int = 50) -> list[dict]:
         if not self.client:

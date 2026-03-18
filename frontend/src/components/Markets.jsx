@@ -238,7 +238,18 @@ export default function Markets() {
 
       <div className="card overflow-hidden">
         {loading ? (
-          <div className="p-8 text-center text-text-secondary text-xs">Loading...</div>
+          <div className="space-y-0">
+            {[...Array(8)].map((_, i) => (
+              <div key={i} className="flex items-center gap-4 px-4 py-3 border-b border-border last:border-0 animate-pulse">
+                <div className="h-3 w-14 bg-surface-2 rounded" />
+                <div className="h-3 w-28 bg-surface-2 rounded" />
+                <div className="h-3 w-20 bg-surface-2 rounded" />
+                <div className="h-3 w-8 bg-surface-2 rounded ml-auto" />
+                <div className="h-3 w-8 bg-surface-2 rounded" />
+                <div className="h-3 w-12 bg-surface-2 rounded" />
+              </div>
+            ))}
+          </div>
         ) : fetchError ? (
           <div className="p-8 text-center text-accent-red text-xs">
             {fetchError} <button onClick={loadEvents} className="underline ml-2">Retry</button>

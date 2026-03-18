@@ -82,7 +82,7 @@ export default function Performance() {
     try {
       await api.updateTradeNotes(idx, noteText);
       setEditingNote(null);
-      api.getPerformance().then(setData);
+      api.getPerformance().then(setData).catch(() => {});
     } catch (e) { toast.error('Failed to save note'); }
   };
 

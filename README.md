@@ -96,6 +96,22 @@ The frontend has 7 tabs accessible from the top navigation bar (or via keyboard 
 - **Toast notifications**: All success/error messages appear as non-blocking toast popups in the bottom-right corner (replacing browser alert dialogs).
 - **Theme toggle**: Switch between dark and light mode via the header button.
 - **Tooltips**: Hover over the info icon (ⓘ) on any label for a detailed explanation.
+- **Accessibility**: Aria labels on all icon-only buttons (theme toggle, mobile menu), connection status indicators with `role="status"`, and live regions for auto-updating timestamps.
+- **Loading skeletons**: Portfolio, Markets, and data tables show animated placeholder rows while loading, improving perceived performance.
+- **Inline confirmations**: Dangerous actions (enabling live auto-trade) use inline confirm/cancel UI instead of browser dialogs.
+- **Input validation**: Backend Pydantic models enforce valid ranges on all configuration and backtest parameters (e.g., thresholds 0-1, positive balances).
+- **CORS security**: Backend CORS is configurable via `CORS_ORIGINS` env var; credentials only enabled with explicit origin allowlist.
+- **Request timeouts**: All API calls have a 30-second AbortController timeout to prevent hanging requests.
+- **Thread-safe cache**: Backend shared cache uses `asyncio.Lock` for all write operations (auto-scan and manual scan).
+- **Safe config parsing**: All numeric environment variables use safe parsers with fallback defaults; kelly_fraction and retrain_hour are clamped to valid ranges.
+- **Database resilience**: All Supabase write operations (trade inserts, scan logs, note updates) are wrapped in try/except with logging, preventing DB errors from crashing background jobs.
+- **Webhook error handling**: External webhook endpoint returns structured error responses instead of raw 500 tracebacks.
+- **Non-blocking scans**: Kalshi API calls and ML inference run in threads (`asyncio.to_thread`) to avoid blocking the FastAPI event loop during scans.
+- **JSON serialization safety**: Training data and paper trader state serialization uses `default=str` to handle numpy types gracefully.
+- **Responsive tooltips**: Tooltip max-width uses `min(280px, 90vw)` to prevent viewport overflow on mobile.
+- **Atomic cache updates**: Auto-scan job batches all log entries into pending lists and flushes them under a single lock acquisition, preventing race conditions with API endpoints.
+- **Non-blocking AI analysis**: Claude AI market analysis runs in a separate thread to avoid blocking the event loop during RF+AI scans.
+- **CSV export validation**: Source parameter is validated to prevent invalid or malicious values.
 
 ---
 
@@ -173,6 +189,8 @@ The signal discovery and trade execution page. Run scans here, view entry/exit s
 - **RF Scan** button: Runs a market scan using only the Random Forest model.
 - **RF + AI** button: Runs a scan using both the Random Forest model and Claude AI for hybrid analysis.
 - **Filter pills**: Filter signals by `All`, `Ready` (passes all risk checks), `RF` (Random Forest only), or `AI` (Claude AI only).
+- **Search**: Type to filter signals by ticker or market title.
+- **Sort**: Sort signals by edge (highest first), confidence, or price (lowest first).
 
 #### Entry Signals Table
 
