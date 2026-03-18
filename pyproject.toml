@@ -15,6 +15,7 @@ dependencies = [
     "uvicorn[standard]>=0.34",
     "scikit-learn>=1.5",
     "numpy>=1.26",
+    "supabase>=2.0",
 ]
 
 [project.scripts]

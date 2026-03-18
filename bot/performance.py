@@ -68,7 +68,9 @@ class PerformanceTracker:
 
     RISK_FREE_DAILY = 0.05 / 365  # ~5% annual risk-free rate
 
-    def __init__(self):
+    def __init__(self, db=None, mode: str = "paper"):
+        self.db = db  # Optional Database instance
+        self.mode = mode
         self.trades: list[TradeRecord] = []
         self.equity_curve: list[dict] = []  # [{time, equity_cents}]
         self._peak_equity = 0
@@ -121,6 +123,13 @@ class PerformanceTracker:
             won=won,
         )
         self.trades.append(trade)
+
+        # Persist to DB if connected
+        if self.db:
+            try:
+                self.db.insert_trade(self.mode, trade)
+            except Exception:
+                pass  # DB writes are best-effort
 
         # Update equity curve
         self._current_equity += pnl_cents

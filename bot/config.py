@@ -8,17 +8,22 @@ from pathlib import Path
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
-load_dotenv()
+load_dotenv(override=True)
 
 
 class Config(BaseModel):
     # Kalshi
     kalshi_api_key_id: str = os.getenv("KALSHI_API_KEY_ID", "")
     kalshi_private_key_path: str = os.getenv("KALSHI_PRIVATE_KEY_PATH", "./kalshi_private_key.pem")
+    kalshi_private_key_raw: str = os.getenv("KALSHI_PRIVATE_KEY", "")  # For cloud deploy
     kalshi_use_demo: bool = os.getenv("KALSHI_USE_DEMO", "true").lower() == "true"
 
     # Anthropic
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
+
+    # Supabase
+    supabase_url: str = os.getenv("SUPABASE_URL", "")
+    supabase_key: str = os.getenv("SUPABASE_KEY", "")
 
     # Trading parameters
     max_bet_amount_cents: int = int(os.getenv("MAX_BET_AMOUNT_CENTS", "2500"))
@@ -35,6 +40,9 @@ class Config(BaseModel):
 
     @property
     def kalshi_private_key(self) -> str:
+        # Prefer env var (for cloud), fall back to file (for local)
+        if self.kalshi_private_key_raw:
+            return self.kalshi_private_key_raw
         path = Path(self.kalshi_private_key_path)
         if path.exists():
             return path.read_text()
@@ -45,6 +53,9 @@ class Config(BaseModel):
 
     def validate_anthropic(self) -> bool:
         return bool(self.anthropic_api_key)
+
+    def validate_supabase(self) -> bool:
+        return bool(self.supabase_url and self.supabase_key)
 
 
 config = Config()

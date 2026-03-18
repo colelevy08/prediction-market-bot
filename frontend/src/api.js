@@ -1,4 +1,4 @@
-const API = '/api';
+const API = (import.meta.env.VITE_API_URL || '') + '/api';
 
 async function request(path, options = {}) {
   const res = await fetch(`${API}${path}`, {
@@ -67,4 +67,17 @@ export const api = {
     }),
   paperScan: () => request('/paper/scan', { method: 'POST' }),
   paperTrain: () => request('/paper/train', { method: 'POST' }),
+
+  // Auto-scan / Auto-trade
+  toggleAutoScan: (enabled, intervalSeconds = 60) =>
+    request('/autoscan', {
+      method: 'POST',
+      body: JSON.stringify({ enabled, interval_seconds: intervalSeconds }),
+    }),
+  toggleAutoTrade: (enabled) =>
+    request('/autotrade', {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+    }),
+  getAutoScanStatus: () => request('/autoscan/status'),
 };

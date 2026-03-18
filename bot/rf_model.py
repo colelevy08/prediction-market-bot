@@ -148,8 +148,8 @@ def extract_features(market: Market, event: Event, history: list[dict] | None = 
         "reverse_arb": max(0, 100 - market.yes_ask - market.no_ask),
         "price_dislocation": abs(market.yes_ask - (100 - market.no_bid)),
         "fair_value_gap": (market.yes_bid + market.yes_ask) / 2 - (100 - (market.no_bid + market.no_ask) / 2),
-        "efficiency_score": 1 - abs(features["fair_value_gap"]) / 50,
     })
+    features["efficiency_score"] = 1 - abs(features["fair_value_gap"]) / 50
 
     # ── 6. Momentum Proxies from Current Data (8) ────────────────
     features.update({

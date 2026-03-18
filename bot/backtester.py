@@ -9,11 +9,13 @@ Also provides a paper trading simulator for live testing without real money.
 
 from __future__ import annotations
 
+import json
 import math
 import random
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -22,7 +24,10 @@ from bot.config import config
 from bot.kalshi_client import KalshiClient
 from bot.models import Event, Market, Side
 from bot.rf_model import extract_features, FEATURE_NAMES, PredictionModel, RFSignalGenerator
-from bot.performance import PerformanceTracker
+from bot.performance import PerformanceTracker, TradeRecord
+
+# Default persistence directory
+DATA_DIR = Path(__file__).parent.parent / "data"
 
 
 # ── Historical Data Fetcher ──────────────────────────────────────────────────
@@ -352,10 +357,11 @@ class PaperTrader:
     Tracks full performance metrics, MAE/MFE, and Sharpe Ratio.
     """
 
-    def __init__(self):
+    def __init__(self, db=None):
+        self.db = db  # Optional Database instance
         self.balance_cents: int = 100_00  # $100 starting balance
         self.positions: dict[str, PaperPosition] = {}
-        self.tracker = PerformanceTracker()
+        self.tracker = PerformanceTracker(db=db, mode="paper")
         self.generator = RFSignalGenerator()
         self.total_scans: int = 0
         self.signals_seen: int = 0
@@ -541,4 +547,137 @@ class PaperTrader:
         """Train the model using historical data."""
         features_list = [d["features"] for d in settled_data]
         outcomes = [d["outcome"] for d in settled_data]
-        return self.generator.model.train_on_historical(features_list, outcomes)
+        result = self.generator.model.train_on_historical(features_list, outcomes)
+
+        # Persist training run to DB
+        if self.db and self.db.is_connected and isinstance(result, dict):
+            try:
+                self.db.insert_training_run(
+                    samples=len(settled_data),
+                    cv_accuracy=result.get("cv_accuracy", 0),
+                    oob_score=result.get("oob_score", 0),
+                    n_features=result.get("n_features", 106),
+                    n_estimators=self.generator.model.n_estimators,
+                    feature_importance=self.generator.model.get_feature_importance(),
+                )
+            except Exception:
+                pass
+
+        return result
+
+    # ── Persistence ──────────────────────────────────────────────
+
+    def save_state(self, path: Path | None = None):
+        """Save paper trading state to JSON file and DB."""
+        # Save to DB if connected
+        if self.db and self.db.is_connected:
+            try:
+                positions_dict = {
+                    ticker: {
+                        "ticker": p.ticker, "side": p.side,
+                        "entry_price": p.entry_price, "contracts": p.contracts,
+                        "model_prob": p.model_prob, "entry_time": p.entry_time,
+                        "min_price_seen": p.min_price_seen, "max_price_seen": p.max_price_seen,
+                    }
+                    for ticker, p in self.positions.items()
+                }
+                self.db.save_paper_state(
+                    self.balance_cents, self.total_scans, self.signals_seen, positions_dict
+                )
+            except Exception:
+                pass
+
+        # Also save to JSON file as backup
+        path = path or DATA_DIR / "paper_state.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        state = {
+            "balance_cents": self.balance_cents,
+            "total_scans": self.total_scans,
+            "signals_seen": self.signals_seen,
+            "positions": {
+                ticker: {
+                    "ticker": p.ticker,
+                    "side": p.side,
+                    "entry_price": p.entry_price,
+                    "contracts": p.contracts,
+                    "model_prob": p.model_prob,
+                    "entry_time": p.entry_time,
+                    "min_price_seen": p.min_price_seen,
+                    "max_price_seen": p.max_price_seen,
+                }
+                for ticker, p in self.positions.items()
+            },
+            "trades": self.tracker.get_trade_history(),
+            "equity_curve": self.tracker.get_equity_curve(),
+            "saved_at": datetime.now(timezone.utc).isoformat(),
+        }
+        path.write_text(json.dumps(state, indent=2))
+
+    def load_state(self, path: Path | None = None) -> bool:
+        """Load paper trading state from DB or JSON file. Returns True if loaded."""
+        # Try DB first
+        if self.db and self.db.is_connected:
+            try:
+                state = self.db.load_paper_state()
+                if state:
+                    self.balance_cents = state.get("balance_cents", 100_00)
+                    self.total_scans = state.get("total_scans", 0)
+                    self.signals_seen = state.get("signals_seen", 0)
+                    self.positions = {}
+                    for ticker, p in (state.get("positions") or {}).items():
+                        self.positions[ticker] = PaperPosition(
+                            ticker=p["ticker"], side=p["side"],
+                            entry_price=p["entry_price"], contracts=p["contracts"],
+                            model_prob=p["model_prob"], entry_time=p["entry_time"],
+                            min_price_seen=p.get("min_price_seen", 1.0),
+                            max_price_seen=p.get("max_price_seen", 0.0),
+                        )
+                    return True
+            except Exception:
+                pass
+
+        # Fall back to JSON file
+        path = path or DATA_DIR / "paper_state.json"
+        if not path.exists():
+            return False
+
+        try:
+            state = json.loads(path.read_text())
+            self.balance_cents = state.get("balance_cents", 100_00)
+            self.total_scans = state.get("total_scans", 0)
+            self.signals_seen = state.get("signals_seen", 0)
+
+            # Restore positions
+            self.positions = {}
+            for ticker, p in state.get("positions", {}).items():
+                self.positions[ticker] = PaperPosition(
+                    ticker=p["ticker"],
+                    side=p["side"],
+                    entry_price=p["entry_price"],
+                    contracts=p["contracts"],
+                    model_prob=p["model_prob"],
+                    entry_time=p["entry_time"],
+                    min_price_seen=p.get("min_price_seen", 1.0),
+                    max_price_seen=p.get("max_price_seen", 0.0),
+                )
+
+            # Restore trade history
+            self.tracker = PerformanceTracker()
+            for t in state.get("trades", []):
+                self.tracker.record_trade(
+                    ticker=t["ticker"],
+                    side=t["side"],
+                    entry_price=t["entry_price"],
+                    exit_price=t["exit_price"],
+                    contracts=t.get("contracts", 1),
+                    mae=t.get("mae", 0),
+                    mfe=t.get("mfe", 0),
+                    model_probability=t.get("model_probability", 0),
+                    market_probability_at_entry=t.get("market_probability_at_entry", 0),
+                    entry_time=t.get("entry_time", ""),
+                    exit_time=t.get("exit_time", ""),
+                )
+            return True
+        except (json.JSONDecodeError, KeyError):
+            return False

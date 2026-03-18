@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Any
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -20,7 +22,10 @@ from bot.risk_manager import RiskManager
 from bot.performance import PerformanceTracker
 from bot.arbitrage import detect_arbitrage
 from bot.backtester import Backtester, BacktestConfig, HistoricalDataFetcher, PaperTrader
+from bot.database import Database
 from bot.models import OrderRequest, Side, TradingSignal
+
+logger = logging.getLogger("predictionbot")
 
 
 # ── Shared State ─────────────────────────────────────────────────────────────
@@ -32,6 +37,8 @@ ai_analyzer: MarketAnalyzer | None = None
 risk_manager: RiskManager | None = None
 performance: PerformanceTracker | None = None
 paper_trader: PaperTrader | None = None
+db: Database | None = None
+scheduler: AsyncIOScheduler | None = None
 
 # Cache for latest scan results
 _cache: dict[str, Any] = {
@@ -40,21 +47,116 @@ _cache: dict[str, Any] = {
     "exit_signals": [],
     "arbitrage": [],
     "last_scan": None,
+    "auto_scan_enabled": False,
+    "auto_trade_enabled": False,
+    "auto_scan_log": [],
 }
+
+
+async def _auto_scan_job():
+    """Background job that runs every 60s when auto-scan is enabled."""
+    if not kalshi or not config.validate_kalshi():
+        return
+
+    try:
+        events = kalshi.get_events(limit=config.max_events_to_analyze)
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Paper trading scan
+        if paper_trader and paper_trader.generator.model.is_trained:
+            result = paper_trader.scan_and_trade(events)
+            paper_trader.save_state()
+            entries_count = len(result.get("entries", []))
+            exits_count = len(result.get("exits", []))
+            open_pos = result.get("open_positions", 0)
+            _cache["auto_scan_log"].append({
+                "time": now, "type": "paper",
+                "entries": entries_count, "exits": exits_count,
+                "open_positions": open_pos,
+            })
+            if db:
+                db.insert_scan_log("paper", 0, entries_count, exits_count, open_pos)
+
+        # Live trading scan (only when auto_trade is explicitly enabled)
+        if _cache.get("auto_trade_enabled") and rf_generator and risk_manager:
+            rf_signals = rf_generator.generate_signals(events)
+            portfolio = kalshi.get_portfolio_summary()
+            positions = kalshi.get_positions()
+            exit_signals = rf_generator.check_exits(events, positions)
+
+            # Auto-execute exit signals
+            for sig in exit_signals:
+                try:
+                    order = OrderRequest(
+                        ticker=sig.ticker,
+                        side=Side(sig.side.value),
+                        price_cents=int(sig.market_probability * 100),
+                        count=1,
+                        action="sell",
+                    )
+                    kalshi.place_order(order)
+                    risk_manager.record_trade()
+                    logger.info(f"Auto-exit: {sig.ticker}")
+                except Exception as e:
+                    logger.error(f"Auto-exit failed for {sig.ticker}: {e}")
+
+            # Auto-execute entry signals that pass risk check
+            for sig in rf_signals:
+                allowed, reason = risk_manager.check_signal(sig, portfolio)
+                if not allowed:
+                    continue
+                try:
+                    order = risk_manager.build_order(sig)
+                    kalshi.place_order(order)
+                    risk_manager.record_trade()
+                    logger.info(f"Auto-entry: {sig.ticker} ({sig.side.value})")
+                except Exception as e:
+                    logger.error(f"Auto-entry failed for {sig.ticker}: {e}")
+
+            _cache["auto_scan_log"].append({
+                "time": now,
+                "type": "live",
+                "signals": len(rf_signals),
+                "exits": len(exit_signals),
+            })
+
+        # Update cache
+        _cache["last_scan"] = now
+
+        # Keep log trimmed to last 100 entries
+        if len(_cache["auto_scan_log"]) > 100:
+            _cache["auto_scan_log"] = _cache["auto_scan_log"][-100:]
+
+    except Exception as e:
+        logger.error(f"Auto-scan failed: {e}")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global kalshi, dk, rf_generator, ai_analyzer, risk_manager, performance, paper_trader
+    global kalshi, dk, rf_generator, ai_analyzer, risk_manager, performance, paper_trader, db, scheduler
+    db = Database()
     kalshi = KalshiClient()
     dk = DraftKingsClient()
     rf_generator = RFSignalGenerator()
     risk_manager = RiskManager()
-    performance = PerformanceTracker()
-    paper_trader = PaperTrader()
+    performance = PerformanceTracker(db=db, mode="live")
+    paper_trader = PaperTrader(db=db)
+    paper_trader.load_state()  # Restore from DB or disk
+
     if config.validate_anthropic():
         ai_analyzer = MarketAnalyzer()
+
+    # Start APScheduler
+    scheduler = AsyncIOScheduler()
+    scheduler.start()
+
     yield
+
+    # Shutdown
+    if scheduler:
+        scheduler.shutdown(wait=False)
+    if paper_trader:
+        paper_trader.save_state()  # Persist on shutdown
     if kalshi:
         kalshi.close()
     if dk:
@@ -101,6 +203,7 @@ async def get_status():
     return {
         "kalshi_connected": config.validate_kalshi(),
         "anthropic_connected": config.validate_anthropic(),
+        "supabase_connected": db.is_connected if db else False,
         "environment": "demo" if config.kalshi_use_demo else "production",
         "config": {
             "max_bet_amount_cents": config.max_bet_amount_cents,
@@ -576,3 +679,102 @@ async def paper_train():
         return {"status": "trained", "samples": len(settled), **result}
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+# ── Auto-Scan / Auto-Trade Scheduler ──────────────────────────────────────
+
+class AutoScanConfig(BaseModel):
+    enabled: bool = True
+    interval_seconds: int = 60
+
+
+class AutoTradeConfig(BaseModel):
+    enabled: bool = True
+
+
+@app.post("/api/autoscan")
+async def toggle_auto_scan(req: AutoScanConfig):
+    """Enable/disable automatic background scanning every N seconds."""
+    global scheduler
+    if not scheduler:
+        raise HTTPException(500, "Scheduler not initialized")
+
+    job_id = "auto_scan"
+    existing = scheduler.get_job(job_id)
+
+    if req.enabled:
+        if existing:
+            scheduler.reschedule_job(job_id, trigger="interval", seconds=req.interval_seconds)
+        else:
+            scheduler.add_job(
+                _auto_scan_job,
+                "interval",
+                seconds=req.interval_seconds,
+                id=job_id,
+                replace_existing=True,
+            )
+        _cache["auto_scan_enabled"] = True
+    else:
+        if existing:
+            scheduler.remove_job(job_id)
+        _cache["auto_scan_enabled"] = False
+
+    return {
+        "auto_scan_enabled": _cache["auto_scan_enabled"],
+        "interval_seconds": req.interval_seconds,
+    }
+
+
+@app.post("/api/autotrade")
+async def toggle_auto_trade(req: AutoTradeConfig):
+    """Enable/disable automatic live trading (requires auto-scan to be on)."""
+    _cache["auto_trade_enabled"] = req.enabled
+    return {
+        "auto_trade_enabled": _cache["auto_trade_enabled"],
+        "auto_scan_enabled": _cache.get("auto_scan_enabled", False),
+    }
+
+
+@app.get("/api/autoscan/status")
+async def get_auto_scan_status():
+    """Get auto-scan scheduler status and recent log."""
+    return {
+        "auto_scan_enabled": _cache.get("auto_scan_enabled", False),
+        "auto_trade_enabled": _cache.get("auto_trade_enabled", False),
+        "last_scan": _cache.get("last_scan"),
+        "log": _cache.get("auto_scan_log", [])[-20:],
+    }
+
+
+# ── Database History Endpoints ─────────────────────────────────────────────
+
+@app.get("/api/history/trades")
+async def get_trade_history(mode: str = "paper", limit: int = 100):
+    """Get persistent trade history from Supabase."""
+    if not db or not db.is_connected:
+        return {"trades": [], "source": "none"}
+    return {"trades": db.get_trades(mode=mode, limit=limit), "source": "supabase"}
+
+
+@app.get("/api/history/scans")
+async def get_scan_history(limit: int = 50):
+    """Get scan log history from Supabase."""
+    if not db or not db.is_connected:
+        return {"scans": [], "source": "none"}
+    return {"scans": db.get_scan_logs(limit=limit), "source": "supabase"}
+
+
+@app.get("/api/history/performance")
+async def get_performance_history(mode: str = "paper", limit: int = 50):
+    """Get performance snapshots over time from Supabase."""
+    if not db or not db.is_connected:
+        return {"snapshots": [], "source": "none"}
+    return {"snapshots": db.get_performance_history(mode=mode, limit=limit), "source": "supabase"}
+
+
+@app.get("/api/history/training")
+async def get_training_history(limit: int = 10):
+    """Get model training history from Supabase."""
+    if not db or not db.is_connected:
+        return {"runs": [], "source": "none"}
+    return {"runs": db.get_training_history(limit=limit), "source": "supabase"}

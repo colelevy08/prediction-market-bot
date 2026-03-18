@@ -34,26 +34,31 @@ class KalshiClient:
             pem_data.encode(), password=None
         )
 
-    def _sign_request(self, method: str, path: str, timestamp_ms: int) -> str:
-        """Generate RSA signature for Kalshi API authentication."""
-        message = f"{timestamp_ms}{method}{path}".encode()
+    def _sign_request(self, method: str, full_path: str, timestamp_ms: int) -> str:
+        """Generate RSA-PSS signature for Kalshi API authentication."""
+        # Strip query params before signing
+        path_no_query = full_path.split("?")[0]
+        message = f"{timestamp_ms}{method}{path_no_query}".encode("utf-8")
 
         if isinstance(self._private_key, ec.EllipticCurvePrivateKey):
             signature = self._private_key.sign(
                 message, ec.ECDSA(hashes.SHA256())
             )
         else:
-            # RSA key
+            # RSA key — Kalshi requires PSS padding
             signature = self._private_key.sign(
                 message,
-                padding.PKCS1v15(),
+                padding.PSS(
+                    mgf=padding.MGF1(hashes.SHA256()),
+                    salt_length=padding.PSS.DIGEST_LENGTH,
+                ),
                 hashes.SHA256(),
             )
         return base64.b64encode(signature).decode()
 
-    def _auth_headers(self, method: str, path: str) -> dict[str, str]:
+    def _auth_headers(self, method: str, full_path: str) -> dict[str, str]:
         ts = int(time.time() * 1000)
-        sig = self._sign_request(method.upper(), path, ts)
+        sig = self._sign_request(method.upper(), full_path, ts)
         return {
             "KALSHI-ACCESS-KEY": self.api_key_id,
             "KALSHI-ACCESS-SIGNATURE": sig,
@@ -65,7 +70,9 @@ class KalshiClient:
         self, method: str, path: str, params: dict | None = None, json: dict | None = None
     ) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
-        headers = self._auth_headers(method.upper(), path)
+        # Sign with the full path including /trade-api/v2
+        full_path = f"/trade-api/v2{path}"
+        headers = self._auth_headers(method.upper(), full_path)
         resp = self._client.request(method, url, headers=headers, params=params, json=json)
         resp.raise_for_status()
         return resp.json()

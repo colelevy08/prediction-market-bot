@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { api } from '../api';
 
 export default function Settings({ status, onRefresh }) {
@@ -9,6 +9,18 @@ export default function Settings({ status, onRefresh }) {
     max_open_positions: status?.config?.max_open_positions || 10,
   });
   const [saved, setSaved] = useState(false);
+  const [autoScan, setAutoScan] = useState(false);
+  const [autoTrade, setAutoTrade] = useState(false);
+  const [scanInterval, setScanInterval] = useState(60);
+  const [scanLog, setScanLog] = useState([]);
+
+  useEffect(() => {
+    api.getAutoScanStatus().then(s => {
+      setAutoScan(s.auto_scan_enabled || false);
+      setAutoTrade(s.auto_trade_enabled || false);
+      setScanLog(s.log || []);
+    }).catch(() => {});
+  }, []);
 
   const handleSave = async () => {
     try {
@@ -72,6 +84,74 @@ export default function Settings({ status, onRefresh }) {
             className="w-full py-2.5 bg-white text-black text-xs font-semibold tracking-wide rounded-lg hover:bg-gray-200 transition-all uppercase">
             {saved ? 'Saved!' : 'Save Settings'}
           </button>
+        </div>
+      </div>
+
+      {/* Auto-Scan / Auto-Trade */}
+      <div className="bg-card border border-border rounded-lg p-5">
+        <h3 className="text-[10px] uppercase tracking-widest text-text-secondary font-semibold mb-4">24/7 Automation</h3>
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-xs font-semibold">Auto-Scan (Paper)</span>
+              <p className="text-[10px] text-text-muted mt-0.5">Scans markets and records shadow trades automatically</p>
+            </div>
+            <button
+              onClick={async () => {
+                const next = !autoScan;
+                await api.toggleAutoScan(next, scanInterval);
+                setAutoScan(next);
+              }}
+              className={`text-[10px] px-3 py-1.5 rounded font-semibold uppercase tracking-wide transition-all ${
+                autoScan ? 'bg-accent-green/10 text-accent-green' : 'bg-white/5 text-text-muted hover:bg-white/10'
+              }`}
+            >
+              {autoScan ? 'Running' : 'Off'}
+            </button>
+          </div>
+
+          <div>
+            <label className="text-[10px] uppercase tracking-widest text-text-secondary block mb-1">Scan Interval (seconds)</label>
+            <input type="number" min={10} max={600} step={10} value={scanInterval}
+              onChange={e => setScanInterval(parseInt(e.target.value) || 60)}
+              className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm font-mono text-white focus:border-accent-green focus:outline-none transition-colors" />
+          </div>
+
+          <div className="flex items-center justify-between pt-2 border-t border-border">
+            <div>
+              <span className="text-xs font-semibold">Auto-Trade (Live)</span>
+              <p className="text-[10px] text-accent-red mt-0.5">Executes real trades on Kalshi — use with caution</p>
+            </div>
+            <button
+              onClick={async () => {
+                if (!autoTrade && !confirm('This will place REAL trades on Kalshi. Continue?')) return;
+                const next = !autoTrade;
+                await api.toggleAutoTrade(next);
+                setAutoTrade(next);
+              }}
+              className={`text-[10px] px-3 py-1.5 rounded font-semibold uppercase tracking-wide transition-all ${
+                autoTrade ? 'bg-accent-red/10 text-accent-red' : 'bg-white/5 text-text-muted hover:bg-white/10'
+              }`}
+            >
+              {autoTrade ? 'Live' : 'Off'}
+            </button>
+          </div>
+
+          {scanLog.length > 0 && (
+            <div className="mt-3">
+              <h4 className="text-[10px] uppercase tracking-widest text-text-muted mb-2">Recent Scans</h4>
+              <div className="space-y-1 max-h-32 overflow-y-auto">
+                {scanLog.slice().reverse().map((entry, i) => (
+                  <div key={i} className="text-[10px] font-mono text-text-secondary bg-surface rounded px-2 py-1 flex justify-between">
+                    <span>{new Date(entry.time).toLocaleTimeString()}</span>
+                    <span className={entry.type === 'live' ? 'text-accent-red' : 'text-accent-green'}>
+                      {entry.type === 'live' ? `${entry.signals || 0} signals` : `${entry.entries || 0} entries, ${entry.exits || 0} exits`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
