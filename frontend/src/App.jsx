@@ -56,7 +56,7 @@ export default function App() {
     setScanResult(null);
     const start = Date.now();
     try {
-      const result = await api.runScan(status?.config?.max_events_to_analyze || 20, useAi);
+      const result = await api.runScan(useAi);
       setScanResult(result);
       setError(null);
       const elapsed = Date.now() - start;

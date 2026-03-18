@@ -364,7 +364,6 @@ app.add_middleware(
 
 class ScanRequest(BaseModel):
     """Request body for POST /api/scan."""
-    max_events: int = 20       # Number of top-volume events to scan
     use_ai: bool = False       # If true, also run Claude AI analysis alongside RF model
 
 
@@ -475,7 +474,7 @@ async def run_scan(req: ScanRequest):
     """Run an on-demand market scan triggered by the frontend Signals tab.
 
     Pipeline:
-      1. Fetch top events by volume from Kalshi (limited to max_events).
+      1. Fetch ALL events from Kalshi using cursor-based pagination.
       2. Generate entry signals using the RF+GB ensemble model.
       3. Optionally generate additional signals using Claude AI (if use_ai=true).
       4. Check open positions for exit signals (target hit or expiry approaching).
@@ -488,8 +487,8 @@ async def run_scan(req: ScanRequest):
         raise HTTPException(400, "Kalshi not connected")
 
     try:
-        # Fetch events
-        events = kalshi.get_events(limit=req.max_events)
+        # Fetch ALL events from Kalshi
+        events = kalshi.get_all_events()
         total_markets = sum(len(e.markets) for e in events)
 
         # Generate RF signals (guide logic)
@@ -706,7 +705,7 @@ async def scan_arbitrage():
         raise HTTPException(400, "Clients not initialized")
 
     try:
-        events = kalshi.get_events(limit=config.max_events_to_analyze)
+        events = kalshi.get_all_events()
         kalshi_markets = [m for e in events for m in e.markets if m.status == "open"]
         dk_markets = dk.get_prediction_markets()
 
@@ -916,7 +915,7 @@ async def paper_scan():
         raise HTTPException(400, "Paper trader not initialized")
 
     try:
-        events = kalshi.get_events(limit=config.max_events_to_analyze)
+        events = kalshi.get_all_events()
         result = paper_trader.scan_and_trade(events)
         return result
     except Exception as e:
@@ -1142,7 +1141,7 @@ async def receive_webhook(
     if payload.action == "scan":
         if not kalshi or not config.validate_kalshi():
             raise HTTPException(400, "Kalshi not connected")
-        events = kalshi.get_events(limit=config.max_events_to_analyze)
+        events = kalshi.get_all_events()
         if paper_trader and paper_trader.generator.model.is_trained:
             result = paper_trader.scan_and_trade(events)
             return {"action": "scan", "result": result}

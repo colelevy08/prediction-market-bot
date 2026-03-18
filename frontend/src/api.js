@@ -56,10 +56,10 @@ export const api = {
   getFeatureImportance: () => request('/model/features'),
   getArbitrage: () => request('/arbitrage'),
 
-  runScan: (maxEvents = 20, useAi = false) =>
+  runScan: (useAi = false) =>
     request('/scan', {
       method: 'POST',
-      body: JSON.stringify({ max_events: maxEvents, use_ai: useAi }),
+      body: JSON.stringify({ use_ai: useAi }),
     }),
 
   placeTrade: (ticker, side, priceCents, count) =>

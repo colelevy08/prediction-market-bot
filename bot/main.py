@@ -137,7 +137,7 @@ def run_scan(kalshi: KalshiClient, analyzer: MarketAnalyzer, risk_manager: RiskM
     refreshing the portfolio after each successful order.
     """
     console.print("\n[bold]Fetching events from Kalshi...[/]")
-    events = kalshi.get_events(limit=config.max_events_to_analyze)
+    events = kalshi.get_all_events()
     console.print(f"  Found [cyan]{len(events)}[/] events with [cyan]{sum(len(e.markets) for e in events)}[/] markets")
 
     console.print("\n[bold]Analyzing markets with Claude...[/]")
@@ -179,7 +179,7 @@ def run_arbitrage_scan(kalshi: KalshiClient, dk: DraftKingsClient):
     """
     console.print("\n[bold]Scanning for cross-platform arbitrage...[/]")
 
-    events = kalshi.get_events(limit=config.max_events_to_analyze)
+    events = kalshi.get_all_events()
     kalshi_markets = [m for e in events for m in e.markets if m.status == "open"]
     dk_markets = dk.get_prediction_markets()
 
