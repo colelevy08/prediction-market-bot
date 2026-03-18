@@ -21,6 +21,27 @@ Built on the Random Forest strategy from [@noisyb0y1's guide](https://x.com/nois
 
 ---
 
+## Architecture
+
+```
+Frontend (React + Vite + Tailwind)  ←→  Backend (FastAPI + Python)  ←→  Kalshi API
+         Vercel                              Railway                  DraftKings
+                                              ↕
+                                      Supabase (PostgreSQL)
+```
+
+| Layer | Technology |
+|-------|-----------|
+| ML | scikit-learn (Random Forest + Gradient Boosting), NumPy |
+| Backend | FastAPI, uvicorn, APScheduler, httpx, Pydantic |
+| Frontend | React 18, Vite, Tailwind CSS, Recharts |
+| AI | Anthropic Claude (Sonnet 4.6) |
+| Database | Supabase (PostgreSQL) — optional persistent storage |
+| Auth | RSA-PSS signed API requests |
+| Deploy | Railway (backend), Vercel (frontend), auto-deploy on git push |
+
+---
+
 ## How It Works
 
 ### The Strategy
@@ -138,6 +159,10 @@ MAX_BET_AMOUNT_CENTS=2500   # $25 max per trade
 MIN_EDGE_THRESHOLD=0.08     # 8% minimum edge
 MAX_DAILY_LOSS_CENTS=10000  # $100 daily loss limit
 MAX_OPEN_POSITIONS=10
+
+# Optional — persistent database (survives restarts/redeploys)
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_KEY=your-service-role-key
 ```
 
 ### 3. Launch
@@ -185,46 +210,72 @@ Two modes for validating the strategy without risking real money:
 - Fetches settled markets from Kalshi history
 - Trains the model on 60% of data, tests on 40%
 - Reports full metrics: Sharpe, win rate, profit factor, equity curve
-- **Parameter Sweep**: tests 25 combinations of entry threshold × confidence level to find optimal settings
+- **Parameter Sweep**: tests 25 combinations of entry threshold x confidence level to find optimal settings
 
-#### Shadow Trading
-- Uses **live market data** but simulates order fills
-- Records every trade the bot _would have made_
+#### Shadow Trading (Paper Trading)
+- Uses **live market data** but simulates order fills — no real money at risk
+- **Add Demo Funds**: Instant preset buttons ($100, $500, $1,000, $5,000, $10,000) or enter a custom amount. Adds to your balance without resetting positions or trade history
+- **Reset All**: Wipes everything and starts fresh with a chosen balance
 - Train the model first, then click **Scan Once** or enable **Auto Scan** (every 60 seconds)
 - Watch the shadow equity curve grow in real time
-- Perfect for validating the strategy before committing real money
+- Full performance tracking: Sharpe Ratio, win rate, MAE/MFE, P&L, open positions
 
 ### Settings
-Adjust risk parameters, view connection status, and see the full strategy reference.
+Adjust risk parameters, toggle 24/7 auto-scan and auto-trade, view scan logs, and check connection status for Kalshi, Claude AI, RF model, and Supabase.
+
+---
+
+## Database (Supabase)
+
+Supabase is **optional** but recommended — it persists all data across server restarts and redeploys.
+
+### What It Stores
+
+| Table | Purpose |
+|-------|---------|
+| `trades` | Every paper and live trade with full metrics |
+| `scan_logs` | Every scan with signal counts, entries, exits |
+| `paper_state` | Paper trader balance, positions, scan count |
+| `performance_snapshots` | Periodic Sharpe, win rate, equity snapshots |
+| `model_training_runs` | CV accuracy, OOB score, feature importance per training |
+
+### Setup
+
+1. Create a project at [supabase.com](https://supabase.com)
+2. Go to **SQL Editor** and run the schema SQL to create the 5 tables
+3. Add `SUPABASE_URL` and `SUPABASE_KEY` (service role key) to your `.env`
+4. The bot auto-connects on startup — all methods gracefully no-op when Supabase isn't configured
+
+### History Endpoints
+
+When Supabase is connected, these endpoints return persistent data:
+
+- `GET /api/history/trades` — trade history by mode (paper/live)
+- `GET /api/history/scans` — scan log history
+- `GET /api/history/performance` — performance snapshots over time
+- `GET /api/history/training` — model training run history
 
 ---
 
 ## Always-Running Deployment
 
-To keep the bot scanning 24/7, you need:
-
-| Component | Recommended Service | Purpose |
-|-----------|-------------------|---------|
-| **Python Backend** | [Railway](https://railway.app) or [Fly.io](https://fly.io) | Runs FastAPI server + shadow trader |
-| **React Frontend** | [Vercel](https://vercel.com) | Hosts the UI |
-| **Database** (optional) | [Supabase](https://supabase.com) | Persists trade history across restarts |
-
 ### Deploy Backend to Railway
 
 ```bash
-# Railway auto-detects Python projects
 railway login
 railway init
 railway up
 ```
 
-Add your `.env` variables in Railway's dashboard under **Variables**.
+Add your `.env` variables in Railway's dashboard under **Variables**. For the private key, paste the full PEM content into a `KALSHI_PRIVATE_KEY` variable (the bot reads from env var when no file is found).
 
-Railway will run the server using the `Procfile`:
+Railway runs the server using the `Procfile`:
 
 ```
 web: uvicorn bot.server:app --host 0.0.0.0 --port $PORT
 ```
+
+**Auto-deploy**: Connect your GitHub repo in Railway's dashboard. Every push to `main` triggers a new deploy.
 
 ### Deploy Frontend to Vercel
 
@@ -235,9 +286,9 @@ npx vercel
 
 Set the environment variable `VITE_API_URL` to your Railway backend URL.
 
-### Or Run Locally with PM2
+**Auto-deploy**: Connect your GitHub repo in Vercel. Set root directory to `frontend`. Every push auto-deploys.
 
-For a simpler always-on setup on your own machine:
+### Or Run Locally with PM2
 
 ```bash
 npm install -g pm2
@@ -255,27 +306,63 @@ pm2 startup
 
 ---
 
+## API Endpoints (32+)
+
+| Category | Endpoint | Method | Description |
+|----------|----------|--------|-------------|
+| Status | `/api/status` | GET | Bot status, connections, config |
+| Portfolio | `/api/portfolio` | GET | Kalshi portfolio summary |
+| Positions | `/api/positions` | GET | Open positions with P&L |
+| Scanning | `/api/scan` | POST | Run market scan (RF + optional AI) |
+| Signals | `/api/signals` | GET | Cached scan results |
+| Events | `/api/events` | GET | Top Kalshi events by volume |
+| Market | `/api/market/{ticker}` | GET | Full 106-feature analysis |
+| Trading | `/api/trade` | POST | Place a trade on Kalshi |
+| Orders | `/api/orders` | GET | Open orders |
+| Cancel | `/api/order/{id}` | DELETE | Cancel an order |
+| Performance | `/api/performance` | GET | Metrics, equity curve, trade log |
+| Features | `/api/model/features` | GET | Feature importance rankings |
+| Arbitrage | `/api/arbitrage` | GET | Cross-platform scan |
+| Config | `/api/config` | PATCH | Update risk parameters |
+| Backtest | `/api/backtest` | POST | Run historical backtest |
+| Sweep | `/api/backtest/sweep` | POST | Parameter sweep (25 combos) |
+| Paper | `/api/paper` | GET | Paper trading state |
+| Paper | `/api/paper/configure` | POST | Reset paper trader |
+| Paper | `/api/paper/add-funds` | POST | Add demo funds (no reset) |
+| Paper | `/api/paper/scan` | POST | Paper scan cycle |
+| Paper | `/api/paper/train` | POST | Train model on history |
+| Scheduler | `/api/autoscan` | POST | Toggle auto-scan (60s) |
+| Scheduler | `/api/autotrade` | POST | Toggle auto-trade (live) |
+| Scheduler | `/api/autoscan/status` | GET | Scheduler status + log |
+| History | `/api/history/trades` | GET | Persistent trade history |
+| History | `/api/history/scans` | GET | Persistent scan log |
+| History | `/api/history/performance` | GET | Performance snapshots |
+| History | `/api/history/training` | GET | Model training runs |
+
+---
+
 ## Project Structure
 
 ```
 prediction-market-bot/
 ├── bot/
-│   ├── server.py          # FastAPI REST API (25+ endpoints)
+│   ├── server.py          # FastAPI REST API (32+ endpoints)
 │   ├── rf_model.py        # RF+GB ensemble, 106 features
-│   ├── backtester.py       # Historical backtesting + paper trader
-│   ├── kalshi_client.py    # Kalshi Trade API v2 client
+│   ├── backtester.py      # Historical backtesting + paper trader
+│   ├── kalshi_client.py   # Kalshi Trade API v2 client (RSA-PSS auth)
 │   ├── draftkings_client.py # DraftKings scraper
-│   ├── analyzer.py         # Claude AI market analysis
-│   ├── performance.py      # Sharpe, log returns, MAE/MFE
-│   ├── risk_manager.py     # Position limits, daily loss, Kelly sizing
-│   ├── arbitrage.py        # Cross-platform arbitrage detection
-│   ├── models.py           # Pydantic data models
-│   ├── config.py           # Environment configuration
-│   └── main.py             # CLI entry point
+│   ├── analyzer.py        # Claude AI market analysis
+│   ├── performance.py     # Sharpe, log returns, MAE/MFE tracking
+│   ├── risk_manager.py    # Position limits, daily loss, Kelly sizing
+│   ├── arbitrage.py       # Cross-platform arbitrage detection
+│   ├── database.py        # Supabase persistence layer (optional)
+│   ├── models.py          # Pydantic data models
+│   ├── config.py          # Environment configuration
+│   └── main.py            # CLI entry point
 ├── frontend/
 │   ├── src/
-│   │   ├── App.jsx         # Main app with 7 tabs
-│   │   ├── api.js          # API client
+│   │   ├── App.jsx        # Main app with 7 tabs
+│   │   ├── api.js         # API client
 │   │   └── components/
 │   │       ├── Dashboard.jsx
 │   │       ├── Signals.jsx
@@ -287,6 +374,8 @@ prediction-market-bot/
 │   └── package.json
 ├── .env.example
 ├── pyproject.toml
+├── requirements.txt
+├── Procfile
 └── README.md
 ```
 

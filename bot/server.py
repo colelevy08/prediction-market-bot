@@ -631,6 +631,10 @@ class PaperTradeConfig(BaseModel):
     balance_cents: int = 100_00
 
 
+class AddFundsRequest(BaseModel):
+    amount_cents: int
+
+
 @app.get("/api/paper")
 async def get_paper_state():
     """Get paper trading state."""
@@ -646,6 +650,17 @@ async def configure_paper(req: PaperTradeConfig):
     paper_trader = PaperTrader()
     paper_trader.configure(req.balance_cents)
     return paper_trader.get_state()
+
+
+@app.post("/api/paper/add-funds")
+async def add_paper_funds(req: AddFundsRequest):
+    """Add demo funds to paper trading balance without resetting state."""
+    if not paper_trader:
+        raise HTTPException(400, "Paper trader not initialized")
+    if req.amount_cents <= 0:
+        raise HTTPException(400, "Amount must be positive")
+    new_balance = paper_trader.add_funds(req.amount_cents)
+    return {"balance_cents": new_balance, "added_cents": req.amount_cents}
 
 
 @app.post("/api/paper/scan")

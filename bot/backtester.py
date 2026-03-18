@@ -370,6 +370,12 @@ class PaperTrader:
         """Set starting balance."""
         self.balance_cents = balance_cents
 
+    def add_funds(self, amount_cents: int) -> int:
+        """Add demo funds to paper balance without resetting state."""
+        self.balance_cents += amount_cents
+        self.save_state()
+        return self.balance_cents
+
     def scan_and_trade(self, events: list[Event]) -> dict:
         """
         Run a full scan cycle:

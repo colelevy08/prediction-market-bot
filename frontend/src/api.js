@@ -65,6 +65,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ balance_cents: balanceCents }),
     }),
+  addPaperFunds: (amountCents) =>
+    request('/paper/add-funds', {
+      method: 'POST',
+      body: JSON.stringify({ amount_cents: amountCents }),
+    }),
   paperScan: () => request('/paper/scan', { method: 'POST' }),
   paperTrain: () => request('/paper/train', { method: 'POST' }),
 

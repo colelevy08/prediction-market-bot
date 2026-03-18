@@ -31,6 +31,8 @@ export default function Testing() {
   // Paper / Shadow trading
   const [paperState, setPaperState] = useState(null);
   const [paperBalance, setPaperBalance] = useState(10000);
+  const [customFunds, setCustomFunds] = useState('');
+  const [fundingMsg, setFundingMsg] = useState(null);
   const [scanHistory, setScanHistory] = useState([]);
   const [autoScan, setAutoScan] = useState(false);
   const intervalRef = useRef(null);
@@ -91,6 +93,15 @@ export default function Testing() {
       setAutoScan(false);
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
+  };
+
+  const addFunds = async (amountCents) => {
+    try {
+      const result = await api.addPaperFunds(amountCents);
+      setPaperState(prev => prev ? { ...prev, balance_cents: result.balance_cents } : prev);
+      setFundingMsg(`+$${(amountCents / 100).toFixed(0)} added`);
+      setTimeout(() => setFundingMsg(null), 2000);
+    } catch (e) { setError(`Failed to add funds: ${e.message}`); }
   };
 
   const trainPaper = async () => {
@@ -362,16 +373,64 @@ export default function Testing() {
                 </span>
               )}
             </div>
+
+            {/* Add Demo Funds */}
+            <div className="bg-surface border border-border rounded-lg p-4 mb-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-xs font-semibold uppercase tracking-widest text-accent-green">Add Demo Funds</h3>
+                {fundingMsg && (
+                  <span className="text-xs font-semibold text-accent-green animate-pulse">{fundingMsg}</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                {[
+                  { label: '$100', cents: 10000 },
+                  { label: '$500', cents: 50000 },
+                  { label: '$1,000', cents: 100000 },
+                  { label: '$5,000', cents: 500000 },
+                  { label: '$10,000', cents: 1000000 },
+                ].map(preset => (
+                  <button
+                    key={preset.cents}
+                    onClick={() => addFunds(preset.cents)}
+                    className="px-4 py-2 bg-accent-green/10 border border-accent-green/20 text-accent-green text-xs font-semibold rounded-lg hover:bg-accent-green/20 transition-all"
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+                <div className="flex items-center gap-1.5 ml-2">
+                  <span className="text-text-secondary text-xs">$</span>
+                  <input
+                    type="number"
+                    placeholder="Custom"
+                    value={customFunds}
+                    onChange={e => setCustomFunds(e.target.value)}
+                    className="w-24 bg-card border border-border rounded-lg px-3 py-2 text-xs font-mono text-white focus:border-accent-green focus:outline-none"
+                  />
+                  <button
+                    onClick={() => {
+                      const amt = Math.round(parseFloat(customFunds) * 100);
+                      if (amt > 0) { addFunds(amt); setCustomFunds(''); }
+                    }}
+                    disabled={!customFunds || parseFloat(customFunds) <= 0}
+                    className="px-3 py-2 bg-accent-green text-black text-xs font-semibold rounded-lg hover:bg-accent-green/80 disabled:opacity-30 transition-all"
+                  >
+                    Add
+                  </button>
+                </div>
+              </div>
+            </div>
+
             <div className="flex items-end gap-3 flex-wrap">
               <div>
-                <label className="text-[10px] uppercase tracking-widest text-text-secondary block mb-1">Balance ($)</label>
+                <label className="text-[10px] uppercase tracking-widest text-text-secondary block mb-1">Reset Balance ($)</label>
                 <input type="number" value={paperBalance / 100}
                   onChange={e => setPaperBalance(Math.round(e.target.value * 100))}
                   className="w-28 bg-surface border border-border rounded-lg px-3 py-2 text-sm font-mono text-white focus:border-accent-green focus:outline-none" />
               </div>
               <button onClick={initPaper} disabled={loading}
                 className="px-4 py-2 bg-card border border-border text-white text-xs font-semibold rounded-lg hover:bg-surface disabled:opacity-30 transition-all uppercase tracking-wide">
-                Reset
+                Reset All
               </button>
               <button onClick={trainPaper} disabled={loading}
                 className="px-4 py-2 bg-accent-yellow/10 border border-accent-yellow/20 text-accent-yellow text-xs font-semibold rounded-lg hover:bg-accent-yellow/20 disabled:opacity-30 transition-all uppercase tracking-wide">
