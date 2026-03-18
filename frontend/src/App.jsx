@@ -43,10 +43,17 @@ export default function App() {
 
   const handleScan = async (useAi = false) => {
     setScanning(true);
+    setScanResult(null);
+    const start = Date.now();
     try {
       const result = await api.runScan(status?.config?.max_events_to_analyze || 20, useAi);
       setScanResult(result);
       setError(null);
+      // Show scanning state for at least 1.5s so user sees it working
+      const elapsed = Date.now() - start;
+      if (elapsed < 1500) {
+        await new Promise(r => setTimeout(r, 1500 - elapsed));
+      }
     } catch (e) {
       setError(`Scan failed: ${e.message}`);
     } finally {
@@ -94,11 +101,13 @@ export default function App() {
             <button
               onClick={() => handleScan(false)}
               disabled={scanning || !status?.kalshi_connected}
-              className="px-5 py-2 bg-white text-black text-xs font-semibold tracking-wide rounded-lg
-                         hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed
-                         transition-all uppercase"
+              className={`px-5 py-2 text-xs font-semibold tracking-wide rounded-lg transition-all uppercase ${
+                scanning
+                  ? 'bg-accent-green text-black animate-pulse'
+                  : 'bg-white text-black hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed'
+              }`}
             >
-              {scanning ? 'Scanning...' : 'Scan'}
+              {scanning ? `Scanning...` : scanResult ? `Scan (${scanResult.markets_scanned || 0} mkts)` : 'Scan'}
             </button>
           </div>
         </div>
@@ -128,6 +137,20 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-6 mt-4">
           <div className="bg-accent-red/5 border border-accent-red/20 rounded-lg p-3 text-xs text-accent-red">
             {error}
+          </div>
+        </div>
+      )}
+
+      {/* Scan result banner */}
+      {scanResult && !scanning && (
+        <div className="max-w-7xl mx-auto px-6 mt-4">
+          <div className="bg-accent-green/5 border border-accent-green/20 rounded-lg p-3 text-xs text-text-secondary flex items-center justify-between">
+            <span>
+              Scanned <span className="text-white font-semibold">{scanResult.events_scanned}</span> events / <span className="text-white font-semibold">{scanResult.markets_scanned}</span> markets
+              {scanResult.rf_signals > 0 && <> — <span className="text-accent-green font-semibold">{scanResult.rf_signals} signals found</span></>}
+              {scanResult.rf_signals === 0 && <> — no signals (model needs training or markets don't meet 2x undervalue criteria)</>}
+            </span>
+            <span className="text-text-muted">{new Date(scanResult.scan_time).toLocaleTimeString()}</span>
           </div>
         </div>
       )}
