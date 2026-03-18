@@ -1,0 +1,216 @@
+import { useState, useEffect } from 'react';
+import { api } from '../api';
+
+function Badge({ value, type }) {
+  const colors = {
+    green: 'bg-accent-green/10 text-accent-green',
+    red: 'bg-accent-red/10 text-accent-red',
+    yellow: 'bg-accent-yellow/10 text-accent-yellow',
+    white: 'bg-white/10 text-white',
+    gray: 'bg-white/5 text-text-secondary',
+  };
+  return (
+    <span className={`text-[10px] px-2 py-0.5 rounded font-semibold uppercase tracking-wide ${colors[type] || colors.gray}`}>
+      {value}
+    </span>
+  );
+}
+
+export default function Signals({ scanResult, onScan, scanning }) {
+  const [signals, setSignals] = useState([]);
+  const [exitSignals, setExitSignals] = useState([]);
+  const [trading, setTrading] = useState({});
+  const [filter, setFilter] = useState('all');
+
+  useEffect(() => {
+    if (scanResult) {
+      setSignals(scanResult.signals || []);
+      setExitSignals(scanResult.exit_signals_data || []);
+    } else {
+      api.getSignals().then(data => {
+        setSignals(data.signals || []);
+        setExitSignals(data.exit_signals || []);
+      }).catch(() => {});
+    }
+  }, [scanResult]);
+
+  const filteredSignals = signals.filter(s => {
+    if (filter === 'ready') return s.risk_check?.allowed;
+    if (filter === 'rf') return s.source === 'random_forest';
+    if (filter === 'ai') return s.source === 'claude_ai';
+    return true;
+  });
+
+  const handleTrade = async (signal) => {
+    const key = signal.ticker;
+    setTrading(prev => ({ ...prev, [key]: true }));
+    try {
+      const priceCents = Math.round(signal.market_probability * 100);
+      await api.placeTrade(signal.ticker, signal.side, priceCents, 1);
+      setSignals(prev => prev.map(s => s.ticker === key ? { ...s, _executed: true } : s));
+    } catch (e) {
+      alert(`Trade failed: ${e.message}`);
+    } finally {
+      setTrading(prev => ({ ...prev, [key]: false }));
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Controls */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <button onClick={() => onScan(false)} disabled={scanning}
+            className="px-5 py-2 bg-white text-black text-xs font-semibold tracking-wide rounded-lg hover:bg-gray-200 disabled:opacity-30 transition-all uppercase">
+            {scanning ? 'Scanning...' : 'RF Scan'}
+          </button>
+          <button onClick={() => onScan(true)} disabled={scanning}
+            className="px-5 py-2 bg-card border border-border text-white text-xs font-semibold tracking-wide rounded-lg hover:bg-surface disabled:opacity-30 transition-all uppercase">
+            {scanning ? 'Scanning...' : 'RF + AI'}
+          </button>
+        </div>
+
+        <div className="flex items-center gap-0.5 bg-card border border-border rounded-lg p-0.5">
+          {[['all', 'All'], ['ready', 'Ready'], ['rf', 'RF'], ['ai', 'AI']].map(([id, label]) => (
+            <button key={id} onClick={() => setFilter(id)}
+              className={`px-3 py-1 text-[10px] font-semibold tracking-wide uppercase rounded transition-all ${
+                filter === id ? 'bg-white text-black' : 'text-text-secondary hover:text-white'
+              }`}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Entry Signals */}
+      <div className="bg-card border border-border rounded-lg overflow-hidden">
+        <div className="px-5 py-3 border-b border-border">
+          <h3 className="text-xs font-semibold uppercase tracking-widest text-text-secondary">
+            Entry Signals ({filteredSignals.length})
+            <span className="font-normal ml-2 normal-case tracking-normal">
+              mkt &le; model &times; 0.5
+            </span>
+          </h3>
+        </div>
+
+        {filteredSignals.length === 0 ? (
+          <div className="p-8 text-center text-text-secondary text-xs">
+            No signals. Run a scan to analyze markets.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-text-secondary text-[10px] uppercase tracking-widest border-b border-border">
+                  <th className="text-left px-4 py-2">Ticker</th>
+                  <th className="text-left px-4 py-2">Market</th>
+                  <th className="text-center px-4 py-2">Side</th>
+                  <th className="text-center px-4 py-2">Src</th>
+                  <th className="text-right px-4 py-2">Model</th>
+                  <th className="text-right px-4 py-2">Market</th>
+                  <th className="text-right px-4 py-2">Edge</th>
+                  <th className="text-right px-4 py-2">Conf</th>
+                  <th className="text-right px-4 py-2">Size</th>
+                  <th className="text-center px-4 py-2">Status</th>
+                  <th className="text-center px-4 py-2">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredSignals.map((sig, i) => (
+                  <tr key={`${sig.ticker}-${i}`} className="border-b border-border/50 hover:bg-surface/50">
+                    <td className="px-4 py-2.5 font-mono text-white">{sig.ticker}</td>
+                    <td className="px-4 py-2.5 max-w-[180px] truncate text-text-secondary" title={sig.market_title}>
+                      {sig.market_title}
+                    </td>
+                    <td className="px-4 py-2.5 text-center">
+                      <Badge value={sig.side} type={sig.side === 'yes' ? 'green' : 'red'} />
+                    </td>
+                    <td className="px-4 py-2.5 text-center">
+                      <Badge value={sig.source === 'random_forest' ? 'RF' : 'AI'} type="white" />
+                    </td>
+                    <td className="px-4 py-2.5 text-right font-mono">{(sig.fair_probability * 100).toFixed(1)}%</td>
+                    <td className="px-4 py-2.5 text-right font-mono">{(sig.market_probability * 100).toFixed(1)}%</td>
+                    <td className="px-4 py-2.5 text-right font-mono">
+                      <span className={sig.edge > 0 ? 'text-accent-green' : 'text-accent-red'}>
+                        {sig.edge > 0 ? '+' : ''}{(sig.edge * 100).toFixed(1)}%
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-right font-mono">{(sig.confidence * 100).toFixed(0)}%</td>
+                    <td className="px-4 py-2.5 text-right font-mono">${(sig.recommended_size_cents / 100).toFixed(2)}</td>
+                    <td className="px-4 py-2.5 text-center">
+                      {sig._executed ? <Badge value="Done" type="green" />
+                        : sig.risk_check?.allowed ? <Badge value="Ready" type="green" />
+                        : <span className="text-[10px] text-text-secondary">{sig.risk_check?.reason?.split(' ').slice(0, 3).join(' ')}</span>
+                      }
+                    </td>
+                    <td className="px-4 py-2.5 text-center">
+                      {sig.risk_check?.allowed && !sig._executed && (
+                        <button onClick={() => handleTrade(sig)} disabled={trading[sig.ticker]}
+                          className="px-3 py-1 bg-accent-green/10 text-accent-green text-[10px] font-semibold uppercase tracking-wide rounded hover:bg-accent-green/20 disabled:opacity-30 transition-all">
+                          {trading[sig.ticker] ? '...' : 'Trade'}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Exit Signals */}
+      {exitSignals.length > 0 && (
+        <div className="bg-card border border-border rounded-lg overflow-hidden">
+          <div className="px-5 py-3 border-b border-border">
+            <h3 className="text-xs font-semibold uppercase tracking-widest text-accent-red">
+              Exit Signals ({exitSignals.length})
+              <span className="font-normal ml-2 normal-case tracking-normal text-text-secondary">
+                mkt &ge; model &times; 0.9 or expiry &lt; 7d
+              </span>
+            </h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-text-secondary text-[10px] uppercase tracking-widest border-b border-border">
+                  <th className="text-left px-4 py-2">Ticker</th>
+                  <th className="text-left px-4 py-2">Market</th>
+                  <th className="text-right px-4 py-2">Model</th>
+                  <th className="text-right px-4 py-2">Market</th>
+                  <th className="text-left px-4 py-2">Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {exitSignals.map((sig, i) => (
+                  <tr key={i} className="border-b border-border/50 hover:bg-surface/50">
+                    <td className="px-4 py-2.5 font-mono text-accent-red">{sig.ticker}</td>
+                    <td className="px-4 py-2.5 text-text-secondary">{sig.market_title}</td>
+                    <td className="px-4 py-2.5 text-right font-mono">{(sig.fair_probability * 100).toFixed(1)}%</td>
+                    <td className="px-4 py-2.5 text-right font-mono">{(sig.market_probability * 100).toFixed(1)}%</td>
+                    <td className="px-4 py-2.5 text-accent-red">{sig.reasoning}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Reasoning */}
+      {filteredSignals.length > 0 && (
+        <div className="bg-card border border-border rounded-lg p-5">
+          <h3 className="text-[10px] uppercase tracking-widest text-text-secondary mb-3">Signal Reasoning</h3>
+          <div className="space-y-1.5">
+            {filteredSignals.slice(0, 5).map((sig, i) => (
+              <div key={i} className="bg-surface border border-border rounded-lg p-2.5 text-xs font-mono card-hover">
+                <span className="text-white">{sig.ticker}</span>
+                <span className="text-text-secondary ml-2">{sig.reasoning}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
