@@ -47,8 +47,10 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api';
 import Tooltip from './Tooltip';
+import { useToast } from './Toast';
 
 export default function Settings({ status, onRefresh }) {
+  const toast = useToast();
   const [config, setConfig] = useState({
     max_bet_amount_cents: status?.config?.max_bet_amount_cents ?? 2500,
     min_edge_threshold: status?.config?.min_edge_threshold ?? 0.08,
@@ -123,7 +125,7 @@ export default function Settings({ status, onRefresh }) {
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
       onRefresh();
-    } catch (e) { alert(`Save failed: ${e.message}`); }
+    } catch (e) { toast.error(`Save failed: ${e.message}`); }
   };
 
   const copyToClipboard = (text, stepIndex) => {
@@ -212,8 +214,8 @@ export default function Settings({ status, onRefresh }) {
               <button onClick={async () => {
                 try {
                   await api.resetDailyPnl();
-                  alert('Daily P&L counter reset');
-                } catch (e) { alert(`Reset failed: ${e.message}`); }
+                  toast.success('Daily P&L counter reset');
+                } catch (e) { toast.error(`Reset failed: ${e.message}`); }
               }}
                 className="btn-danger">
                 Reset Daily P&L
@@ -341,7 +343,7 @@ export default function Settings({ status, onRefresh }) {
                     const next = !autoScan;
                     await api.toggleAutoScan(next, scanInterval);
                     setAutoScan(next);
-                  } catch (e) { alert(`Toggle failed: ${e.message}`); }
+                  } catch (e) { toast.error(`Toggle failed: ${e.message}`); }
                 }}
                 className={`relative w-12 h-6 rounded-full transition-colors duration-200 focus:outline-none ${
                   autoScan ? 'bg-accent-green' : 'bg-text-muted/30'
@@ -378,7 +380,7 @@ export default function Settings({ status, onRefresh }) {
                     const next = !autoTrade;
                     await api.toggleAutoTrade(next);
                     setAutoTrade(next);
-                  } catch (e) { alert(`Toggle failed: ${e.message}`); }
+                  } catch (e) { toast.error(`Toggle failed: ${e.message}`); }
                 }}
                 className={`relative w-12 h-6 rounded-full transition-colors duration-200 focus:outline-none ${
                   autoTrade ? 'bg-accent-red' : 'bg-text-muted/30'
@@ -653,8 +655,8 @@ export default function Settings({ status, onRefresh }) {
                   await api.updateRetrainSchedule(retrainDays, retrainHour);
                   const s = await api.getRetrainSchedule();
                   setRetrainSchedule(s);
-                  alert('Schedule updated!');
-                } catch (e) { alert(`Update failed: ${e.message}`); }
+                  toast.success('Schedule updated!');
+                } catch (e) { toast.error(`Update failed: ${e.message}`); }
               }}
                 className="btn-primary">
                 Update Schedule
@@ -663,9 +665,9 @@ export default function Settings({ status, onRefresh }) {
                 setRetrainLoading(true);
                 try {
                   await api.retrainNow();
-                  alert('Retrain complete! Cumulative training data has been updated.');
+                  toast.success('Retrain complete! Cumulative training data has been updated.');
                   onRefresh();
-                } catch (e) { alert(`Retrain failed: ${e.message}`); }
+                } catch (e) { toast.error(`Retrain failed: ${e.message}`); }
                 finally { setRetrainLoading(false); }
               }}
                 disabled={retrainLoading}

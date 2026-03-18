@@ -4,8 +4,10 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api';
 import Tooltip from './Tooltip';
+import { useToast } from './Toast';
 
 export default function Signals({ scanResult, onScan, scanning }) {
+  const toast = useToast();
   const [signals, setSignals] = useState([]);
   const [exitSignals, setExitSignals] = useState([]);
   const [trading, setTrading] = useState({});
@@ -38,7 +40,7 @@ export default function Signals({ scanResult, onScan, scanning }) {
       await api.placeTrade(signal.ticker, signal.side, priceCents, 1);
       setSignals(prev => prev.map(s => s.ticker === key ? { ...s, _executed: true } : s));
     } catch (e) {
-      alert(`Trade failed: ${e.message}`);
+      toast.error(`Trade failed: ${e.message}`);
     } finally {
       setTrading(prev => ({ ...prev, [key]: false }));
     }

@@ -4,13 +4,16 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api';
 import Tooltip from './Tooltip';
+import { useToast } from './Toast';
 
 export default function Portfolio() {
+  const toast = useToast();
   const [portfolio, setPortfolio] = useState(null);
   const [positions, setPositions] = useState([]);
   const [orders, setOrders] = useState([]);
   const [heatmap, setHeatmap] = useState({});
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(null);
 
   const refresh = async () => {
     setLoading(true);
@@ -22,7 +25,7 @@ export default function Portfolio() {
       setPositions(pos.positions || []);
       setOrders(ord.orders || []);
       setHeatmap(hm.categories || {});
-    } catch (e) { console.error(e); }
+    } catch (e) { setFetchError('Failed to load portfolio'); }
     finally { setLoading(false); }
   };
 
@@ -30,11 +33,17 @@ export default function Portfolio() {
 
   const handleCancelOrder = async (orderId) => {
     try { await api.cancelOrder(orderId); refresh(); }
-    catch (e) { alert(`Cancel failed: ${e.message}`); }
+    catch (e) { toast.error(`Cancel failed: ${e.message}`); }
   };
 
   if (loading) return (
     <div className="text-text-muted text-xs p-12 text-center animate-pulse">Loading portfolio...</div>
+  );
+
+  if (fetchError) return (
+    <div className="card bg-accent-red/5 border-accent-red/20 p-4 text-xs text-accent-red text-center">
+      {fetchError} <button onClick={refresh} className="underline ml-2">Retry</button>
+    </div>
   );
 
   // Compute total unrealized P&L

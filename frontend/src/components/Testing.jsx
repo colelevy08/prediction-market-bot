@@ -55,6 +55,7 @@ import { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 import { LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, BarChart, Bar, Cell } from 'recharts';
 import Tooltip from './Tooltip';
+import { useToast } from './Toast';
 
 const CHART_TOOLTIP_STYLE = { background: '#0c0c0e', border: '1px solid #1e1e22', borderRadius: 8, fontSize: 11, color: '#fff' };
 
@@ -73,6 +74,7 @@ function StatCard({ label, value, sub, color = 'text-text-primary', accentColor,
 }
 
 export default function Testing() {
+  const toast = useToast();
   const [mode, setMode] = useState('backtest');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -170,7 +172,7 @@ export default function Testing() {
     try {
       const result = await api.paperTrain();
       setPaperState(prev => prev ? { ...prev, model_trained: true, training_samples_count: result.total_cumulative_samples } : prev);
-      alert(`Trained on ${result.total_cumulative_samples || result.samples} cumulative samples (${result.new_samples_added ?? '?'} new). CV: ${(result.cv_accuracy * 100).toFixed(1)}%`);
+      toast.success(`Trained on ${result.total_cumulative_samples || result.samples} samples (${result.new_samples_added ?? '?'} new). CV: ${(result.cv_accuracy * 100).toFixed(1)}%`);
     } catch (e) { setError(`Training failed: ${e.message}`); }
     finally { setLoading(false); }
   };

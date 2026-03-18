@@ -37,6 +37,7 @@ import { useState, useEffect } from 'react';
 import { api } from '../api';
 import { LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, BarChart, Bar, Cell } from 'recharts';
 import Tooltip from './Tooltip';
+import { useToast } from './Toast';
 
 function MetricCard({ label, tooltip, value, sub, color = 'text-text-primary', formula, accentColor, progress = null, icon = null }) {
   return (
@@ -63,6 +64,7 @@ function MetricCard({ label, tooltip, value, sub, color = 'text-text-primary', f
 }
 
 export default function Performance() {
+  const toast = useToast();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [categoryData, setCategoryData] = useState({});
@@ -81,7 +83,7 @@ export default function Performance() {
       await api.updateTradeNotes(idx, noteText);
       setEditingNote(null);
       api.getPerformance().then(setData);
-    } catch (e) { console.error(e); }
+    } catch (e) { toast.error('Failed to save note'); }
   };
 
   if (loading) return <div className="text-text-secondary text-xs p-8 text-center">Loading...</div>;

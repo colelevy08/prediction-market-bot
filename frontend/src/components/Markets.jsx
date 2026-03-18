@@ -156,6 +156,7 @@ const SORT_OPTIONS = [
 export default function Markets() {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(null);
   const [selectedTicker, setSelectedTicker] = useState(null);
   const [limit, setLimit] = useState(20);
   const [sortBy, setSortBy] = useState('volume');
@@ -163,8 +164,9 @@ export default function Markets() {
 
   const loadEvents = async () => {
     setLoading(true);
+    setFetchError(null);
     try { const data = await api.getEvents(limit); setEvents(data.events || []); }
-    catch (e) { console.error(e); }
+    catch (e) { setFetchError('Failed to load markets'); }
     finally { setLoading(false); }
   };
 
@@ -223,6 +225,10 @@ export default function Markets() {
       <div className="card overflow-hidden">
         {loading ? (
           <div className="p-8 text-center text-text-secondary text-xs">Loading...</div>
+        ) : fetchError ? (
+          <div className="p-8 text-center text-accent-red text-xs">
+            {fetchError} <button onClick={loadEvents} className="underline ml-2">Retry</button>
+          </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
