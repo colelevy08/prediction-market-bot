@@ -34,16 +34,37 @@ function StatCard({ label, tooltip, value, sub, color = 'text-text-primary', acc
   );
 }
 
+const BET_AMOUNTS = [10, 25, 50, 100, 250, 500];
+
 export default function Dashboard({ status, scanResult, onScan, scanning }) {
   const [portfolio, setPortfolio] = useState(null);
   const [perf, setPerf] = useState(null);
   const [features, setFeatures] = useState(null);
+  const [signals, setSignals] = useState([]);
+  const [betAmount, setBetAmount] = useState(100);
 
-  useEffect(() => {
+  const fetchAll = () => {
     api.getPortfolio().then(setPortfolio).catch(() => {});
     api.getPerformance().then(setPerf).catch(() => {});
     api.getFeatureImportance().then(setFeatures).catch(() => {});
+    api.getSignals().then(data => setSignals(data.signals || [])).catch(() => {});
+  };
+
+  useEffect(() => {
+    fetchAll();
   }, [scanResult]);
+
+  // Auto-refresh every 30 seconds
+  useEffect(() => {
+    const interval = setInterval(fetchAll, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Top 3 opportunities sorted by edge
+  const topOpportunities = [...signals]
+    .filter(s => s.edge > 0 && s.confidence >= 0.7)
+    .sort((a, b) => b.edge - a.edge)
+    .slice(0, 3);
 
   const metrics = perf?.metrics || {};
   const equityCurve = perf?.equity_curve || [];
@@ -119,6 +140,120 @@ export default function Dashboard({ status, scanResult, onScan, scanning }) {
           color={metrics.profit_factor >= 2 ? 'text-accent-green' : metrics.profit_factor >= 1.5 ? 'text-accent-cyan' : metrics.profit_factor >= 1 ? 'text-accent-yellow' : 'text-accent-red'}
           accentColor={metrics.profit_factor >= 1.5 ? 'rgb(var(--color-green))' : metrics.profit_factor >= 1 ? 'rgb(var(--color-yellow))' : 'rgb(var(--color-red))'}
         />
+      </div>
+
+      {/* Top 3 Opportunities */}
+      <div className="card overflow-hidden">
+        <div className="px-5 py-3 border-b border-border flex items-center justify-between flex-wrap gap-3">
+          <h3 className="section-title flex items-center gap-2">
+            Top Opportunities
+            <span className="w-1.5 h-1.5 rounded-full bg-accent-green pulse-dot" />
+            <span className="font-normal normal-case tracking-normal text-text-muted text-[10px] ml-1">
+              auto-refreshes every 30s
+            </span>
+          </h3>
+          <div className="flex items-center gap-1 bg-surface-2 border border-border rounded-lg p-0.5">
+            {BET_AMOUNTS.map(amt => (
+              <button
+                key={amt}
+                onClick={() => setBetAmount(amt)}
+                className={`px-2.5 py-1 text-[10px] font-semibold tracking-wide rounded-md transition-all ${
+                  betAmount === amt
+                    ? 'bg-accent-green text-black'
+                    : 'text-text-muted hover:text-text-secondary'
+                }`}
+              >
+                ${amt}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {topOpportunities.length === 0 ? (
+          <div className="p-10 text-center text-text-muted text-xs">
+            No opportunities found. Run a scan to analyze all markets.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-0 md:divide-x divide-border">
+            {topOpportunities.map((sig, i) => {
+              const edgePct = sig.edge * 100;
+              const contractPrice = sig.market_probability;
+              const contracts = Math.floor(betAmount / (contractPrice * 100));
+              const costBasis = contracts * contractPrice * 100;
+              const payout = contracts * 100;
+              const profit = payout - costBasis;
+              const roi = costBasis > 0 ? (profit / costBasis) * 100 : 0;
+              const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉';
+
+              return (
+                <div key={sig.ticker} className="p-5 relative">
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">{medal}</span>
+                      <div>
+                        <div className="font-mono text-sm font-bold text-text-primary">{sig.ticker}</div>
+                        <div className="text-[10px] text-text-muted max-w-[200px] truncate">{sig.market_title}</div>
+                      </div>
+                    </div>
+                    <span className={`badge ${sig.side === 'yes' ? 'badge-green' : 'badge-red'}`}>{sig.side}</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 mb-4">
+                    <div className="bg-surface-2 rounded-lg p-2">
+                      <div className="text-[9px] uppercase tracking-widest text-text-muted">Edge</div>
+                      <div className={`font-mono text-sm font-bold ${edgePct >= 15 ? 'text-accent-green' : edgePct >= 8 ? 'text-accent-yellow' : 'text-text-primary'}`}>
+                        +{edgePct.toFixed(1)}%
+                      </div>
+                    </div>
+                    <div className="bg-surface-2 rounded-lg p-2">
+                      <div className="text-[9px] uppercase tracking-widest text-text-muted">Confidence</div>
+                      <div className={`font-mono text-sm font-bold ${sig.confidence >= 0.8 ? 'text-accent-green' : 'text-accent-yellow'}`}>
+                        {(sig.confidence * 100).toFixed(0)}%
+                      </div>
+                    </div>
+                    <div className="bg-surface-2 rounded-lg p-2">
+                      <div className="text-[9px] uppercase tracking-widest text-text-muted">Model Prob</div>
+                      <div className="font-mono text-sm font-bold text-accent-blue">
+                        {(sig.fair_probability * 100).toFixed(1)}%
+                      </div>
+                    </div>
+                    <div className="bg-surface-2 rounded-lg p-2">
+                      <div className="text-[9px] uppercase tracking-widest text-text-muted">Market Price</div>
+                      <div className="font-mono text-sm font-bold text-text-secondary">
+                        {(sig.market_probability * 100).toFixed(1)}%
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-accent-green/5 border border-accent-green/20 rounded-lg p-3">
+                    <div className="text-[9px] uppercase tracking-widest text-accent-green/70 mb-2">
+                      Earning Potential @ ${betAmount} bet
+                    </div>
+                    <div className="flex items-end justify-between">
+                      <div>
+                        <div className="text-xs text-text-muted">
+                          {contracts} contracts @ {(contractPrice * 100).toFixed(0)}¢
+                        </div>
+                        <div className="text-2xl font-bold font-mono text-accent-green">
+                          +${profit.toFixed(2)}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-[10px] text-text-muted">ROI</div>
+                        <div className={`font-mono text-lg font-bold ${roi >= 100 ? 'text-accent-green' : roi >= 50 ? 'text-accent-yellow' : 'text-text-primary'}`}>
+                          {roi.toFixed(0)}%
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-[9px] text-text-muted mt-1.5">
+                      If model is correct: ${payout.toFixed(2)} payout on ${costBasis.toFixed(2)} invested
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Charts */}
