@@ -353,6 +353,11 @@ class PredictionModel:
         X = np.array([[f.get(name, 0) for name in FEATURE_NAMES] for f in features_list])
         y = np.array(outcomes)
 
+        # Need both classes (YES and NO outcomes) for meaningful binary classification
+        unique_classes = np.unique(y)
+        if len(unique_classes) < 2:
+            return {"error": f"Need both YES and NO outcomes to train (only found class {unique_classes[0]})", "trained": False}
+
         X = np.nan_to_num(X, nan=0.0, posinf=1e6, neginf=-1e6)
 
         self.scaler.fit(X)
@@ -397,11 +402,23 @@ class PredictionModel:
         X_scaled = self.scaler.transform(X)
 
         # Ensemble: weighted average of RF and GB
+        # predict_proba returns [P(class_0), P(class_1)] when both classes are present
+        # If only one class was in training data, returns [P(that_class)] — need to check classes_
         rf_proba = self.rf.predict_proba(X_scaled)[0]
-        rf_yes = float(rf_proba[1]) if len(rf_proba) > 1 else float(rf_proba[0])
+        if len(self.rf.classes_) == 2:
+            rf_yes = float(rf_proba[1])  # Index 1 = class 1 (YES)
+        elif self.rf.classes_[0] == 1:
+            rf_yes = float(rf_proba[0])  # Only class is YES
+        else:
+            rf_yes = 1.0 - float(rf_proba[0])  # Only class is NO; YES = 1 - P(NO)
 
         gb_proba = self.gb.predict_proba(X_scaled)[0]
-        gb_yes = float(gb_proba[1]) if len(gb_proba) > 1 else float(gb_proba[0])
+        if len(self.gb.classes_) == 2:
+            gb_yes = float(gb_proba[1])
+        elif self.gb.classes_[0] == 1:
+            gb_yes = float(gb_proba[0])
+        else:
+            gb_yes = 1.0 - float(gb_proba[0])
 
         # Weighted ensemble (optimized via Brier score grid search)
         ensemble_prob = 0.7 * rf_yes + 0.3 * gb_yes

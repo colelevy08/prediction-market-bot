@@ -314,8 +314,8 @@ export default function Settings({ status, onRefresh }) {
               {[
                 { label: 'Balance', value: `$${(pt.balance_cents / 100).toFixed(2)}`, color: 'text-accent-green', accent: 'rgb(var(--color-green))' },
                 { label: 'Model', value: pt.model_trained ? 'Trained' : 'Heuristic', color: pt.model_trained ? 'text-accent-green' : 'text-accent-yellow', accent: pt.model_trained ? 'rgb(var(--color-green))' : 'rgb(var(--color-yellow))' },
-                { label: 'Training Samples', value: pt.training_samples?.toLocaleString() || '0', accent: 'rgb(var(--color-purple))' },
-                { label: 'Open Positions', value: pt.open_positions, color: pt.open_positions > 0 ? 'text-accent-blue' : 'text-text-primary', accent: 'rgb(var(--color-blue))' },
+                { label: 'Training Samples', value: (pt.training_samples_count ?? pt.training_samples ?? 0).toLocaleString(), accent: 'rgb(var(--color-purple))' },
+                { label: 'Open Positions', value: Array.isArray(pt.open_positions) ? pt.open_positions.length : (pt.open_positions ?? 0), color: (Array.isArray(pt.open_positions) ? pt.open_positions.length : pt.open_positions) > 0 ? 'text-accent-blue' : 'text-text-primary', accent: 'rgb(var(--color-blue))' },
                 { label: 'Total Scans', value: pt.total_scans, accent: 'rgb(var(--color-cyan))' },
                 { label: 'Auto-Scan', value: status?.auto_scan_enabled ? 'Active' : 'Off', color: status?.auto_scan_enabled ? 'text-accent-green' : 'text-text-muted', accent: status?.auto_scan_enabled ? 'rgb(var(--color-green))' : 'rgb(var(--color-text-muted))' },
               ].map((item, i) => (

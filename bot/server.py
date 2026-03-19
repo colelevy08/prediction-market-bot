@@ -373,7 +373,7 @@ app = FastAPI(title="Prediction Market Bot", version="1.0.0", lifespan=lifespan)
 # CORS middleware allows the React frontend (on Vercel/localhost:5173) to call
 # this backend (on Railway/localhost:8000). allow_origins=["*"] is permissive;
 # tighten this in production to the actual frontend domain.
-_cors_origins = os.getenv("CORS_ORIGINS", "*").split(",")
+_cors_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",")]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
@@ -402,7 +402,7 @@ class TradeRequest(BaseModel):
 
 class ConfigUpdate(BaseModel):
     """Request body for PATCH /api/config (partial config update)."""
-    max_bet_amount_cents: int | None = Field(None, gt=0, le=1_000_00)
+    max_bet_amount_cents: int | None = Field(None, gt=0, le=100_000_00)
     min_edge_threshold: float | None = Field(None, gt=0, le=1.0)
     max_daily_loss_cents: int | None = Field(None, gt=0, le=100_000_00)
     max_open_positions: int | None = Field(None, gt=0, le=100)
@@ -534,14 +534,20 @@ async def run_scan(req: ScanRequest):
         # Validate signals through risk manager
         validated_signals = []
         for sig in rf_signals:
-            allowed, reason = risk_manager.check_signal(sig, portfolio)
+            if risk_manager:
+                allowed, reason = risk_manager.check_signal(sig, portfolio)
+            else:
+                allowed, reason = True, "No risk manager"
             sig_dict = sig.model_dump()
             sig_dict["risk_check"] = {"allowed": allowed, "reason": reason}
             sig_dict["source"] = "random_forest"
             validated_signals.append(sig_dict)
 
         for sig in ai_signals:
-            allowed, reason = risk_manager.check_signal(sig, portfolio)
+            if risk_manager:
+                allowed, reason = risk_manager.check_signal(sig, portfolio)
+            else:
+                allowed, reason = True, "No risk manager"
             sig_dict = sig.model_dump()
             sig_dict["risk_check"] = {"allowed": allowed, "reason": reason}
             sig_dict["source"] = "claude_ai"
