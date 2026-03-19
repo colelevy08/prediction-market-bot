@@ -298,6 +298,7 @@ class PerformanceTracker:
                 "mae": round(t.mae, 4),
                 "mfe": round(t.mfe, 4),
                 "model_probability": round(t.model_probability, 4),
+                "market_probability_at_entry": round(t.market_probability_at_entry, 4),
                 "won": t.won,
                 "category": t.category,
                 "notes": t.notes,

@@ -472,19 +472,21 @@ class Backtester:
             market_price = market.mid_price_yes / 100
 
             # Confidence check (guide: 70%+)
-            confidence = abs(model_prob - 0.5) * 2
+            # confidence = max(model_prob, 1 - model_prob): how sure the model is about one side
+            confidence = max(model_prob, 1 - model_prob)
             if confidence < cfg.min_confidence:
                 result.signals_filtered += 1
                 continue
 
             # Entry rule (guide: market_price <= model_prob * 0.5)
+            # entry_price always stores the YES market price for consistent P&L calc
             if model_prob > 0.5 and market_price <= model_prob * cfg.entry_threshold:
                 side = "yes"
                 entry_price = market_price
                 edge = model_prob - market_price
             elif model_prob < 0.5 and (1 - market_price) <= (1 - model_prob) * cfg.entry_threshold:
                 side = "no"
-                entry_price = 1 - market_price
+                entry_price = market_price  # Store YES price; NO cost = 1 - market_price
                 edge = (1 - model_prob) - (1 - market_price)
             else:
                 result.signals_filtered += 1
@@ -492,25 +494,36 @@ class Backtester:
 
             result.signals_generated += 1
 
-            # Position sizing
+            # Position sizing: cost per contract depends on side
+            cost_per_contract = int(entry_price * 100) if side == "yes" else int((1 - entry_price) * 100)
+            cost_per_contract = max(cost_per_contract, 1)
             bet_size = int(cfg.max_bet_cents * min(edge, 0.5) * confidence)
             bet_size = max(1, min(bet_size, cfg.max_bet_cents, balance))
-            contracts = max(1, bet_size // max(int(entry_price * 100), 1))
+            contracts = max(1, bet_size // cost_per_contract)
 
-            if contracts * int(entry_price * 100) > balance:
+            if contracts * cost_per_contract > balance:
                 continue
 
             # Simulate resolution
+            # exit_price = YES market price at settlement (1.0 if YES wins, 0.0 if NO wins)
+            # PerformanceTracker computes P&L as:
+            #   YES side: (exit_price - entry_price) * 100 → positive when YES wins
+            #   NO side:  (entry_price - exit_price) * 100 → positive when NO wins (YES price drops)
+            exit_price = 1.0 if actual_outcome == 1 else 0.0
             if side == "yes":
-                exit_price = 1.0 if actual_outcome == 1 else 0.0
                 pnl = (exit_price - entry_price) * 100 * contracts
             else:
-                exit_price = 0.0 if actual_outcome == 1 else 1.0
-                pnl = ((1 - entry_price) - (1 - exit_price)) * 100 * contracts if actual_outcome == 0 else -entry_price * 100 * contracts
+                pnl = (entry_price - exit_price) * 100 * contracts
 
             # Calculate MAE/MFE (simplified for settled markets)
-            mae = entry_price if (side == "yes" and actual_outcome == 0) or (side == "no" and actual_outcome == 1) else 0
-            mfe = (1 - entry_price) if (side == "yes" and actual_outcome == 1) or (side == "no" and actual_outcome == 0) else 0
+            # For YES: MAE = entry_price (full loss if loses), MFE = 1 - entry_price (full gain if wins)
+            # For NO: MAE = 1 - entry_price (NO cost if loses), MFE = entry_price (profit if wins)
+            if side == "yes":
+                mae = entry_price if actual_outcome == 0 else 0
+                mfe = (1 - entry_price) if actual_outcome == 1 else 0
+            else:
+                mae = (1 - entry_price) if actual_outcome == 1 else 0
+                mfe = entry_price if actual_outcome == 0 else 0
 
             self.tracker.record_trade(
                 ticker=market.ticker,
@@ -524,7 +537,14 @@ class Backtester:
                 market_probability_at_entry=market_price,
             )
 
-            balance += int(pnl)
+            # Deduct cost and add settlement proceeds
+            balance -= cost_per_contract * contracts
+            if side == "yes":
+                # YES settlement: receive exit_price * 100 per contract
+                balance += int(exit_price * 100) * contracts
+            else:
+                # NO settlement: receive (1 - exit_price) * 100 per contract
+                balance += int((1 - exit_price) * 100) * contracts
 
         # Compile results
         metrics = self.tracker.get_metrics()
@@ -677,8 +697,12 @@ class PaperTrader:
                 continue
 
             # Paper fill at the ask price
+            # entry_price = YES market price (used for tracking and P&L)
             entry_price = sig.market_probability
-            contracts = max(1, cost // max(int(entry_price * 100), 1))
+            # Cost per contract: YES side pays entry_price, NO side pays (1 - entry_price)
+            cost_per_contract = int(entry_price * 100) if sig.side == Side.YES else int((1 - entry_price) * 100)
+            cost_per_contract = max(cost_per_contract, 1)
+            contracts = max(1, cost // cost_per_contract)
 
             # Find category from the signal's event
             sig_category = ""
@@ -699,7 +723,7 @@ class PaperTrader:
                 min_price_seen=entry_price,
                 max_price_seen=entry_price,
             )
-            self.balance_cents -= int(entry_price * 100 * contracts)
+            self.balance_cents -= cost_per_contract * contracts
             entries.append({
                 "ticker": sig.ticker,
                 "side": sig.side.value,
@@ -750,7 +774,12 @@ class PaperTrader:
             pos.max_price_seen = max(pos.max_price_seen, current_price)
 
             # Exit rules from guide
-            hit_target = current_price >= pos.model_prob * 0.9
+            # YES side: exit when YES price rises to 90% of model's fair value
+            # NO side: exit when YES price drops enough that NO side captured 90% of value
+            if pos.side == "yes":
+                hit_target = current_price >= pos.model_prob * 0.9
+            else:
+                hit_target = current_price <= 1 - (1 - pos.model_prob) * 0.9
             settled = market.status == "settled"
 
             # Time-based: check days to expiry
@@ -764,12 +793,19 @@ class PaperTrader:
             hit_expiry = days_left <= 7
 
             if hit_target or hit_expiry or settled:
+                # exit_price = YES market price at exit (consistent with entry_price)
                 exit_price = current_price
                 if settled:
-                    exit_price = 1.0 if market.result == pos.side else 0.0
+                    # Settlement: YES price goes to 1.0 if YES wins, 0.0 if NO wins
+                    exit_price = 1.0 if market.result == "yes" else 0.0
 
-                mae = pos.entry_price - pos.min_price_seen if pos.side == "yes" else pos.max_price_seen - (1 - pos.entry_price)
-                mfe = pos.max_price_seen - pos.entry_price if pos.side == "yes" else (1 - pos.entry_price) - pos.min_price_seen
+                # MAE/MFE: tracked relative to entry_price (YES price)
+                if pos.side == "yes":
+                    mae = pos.entry_price - pos.min_price_seen  # Price dropped below entry
+                    mfe = pos.max_price_seen - pos.entry_price  # Price rose above entry
+                else:
+                    mae = pos.max_price_seen - pos.entry_price  # Price rose (bad for NO)
+                    mfe = pos.entry_price - pos.min_price_seen  # Price dropped (good for NO)
 
                 self.tracker.record_trade(
                     ticker=ticker,
@@ -787,9 +823,12 @@ class PaperTrader:
 
                 if pos.side == "yes":
                     pnl = (exit_price - pos.entry_price) * 100 * pos.contracts
+                    # YES side: receive exit_price per contract at exit
                     self.balance_cents += int(exit_price * 100 * pos.contracts)
                 else:
                     pnl = (pos.entry_price - exit_price) * 100 * pos.contracts
+                    # NO side: receive (1 - exit_price) per contract at exit
+                    # exit_price here is the YES price, so NO payout = 1 - YES price
                     self.balance_cents += int((1 - exit_price) * 100 * pos.contracts)
 
                 reason = "Target" if hit_target else ("Expiry" if hit_expiry else "Settled")
@@ -1001,8 +1040,8 @@ class PaperTrader:
                     max_price_seen=p.get("max_price_seen", 0.0),
                 )
 
-            # Restore trade history
-            self.tracker = PerformanceTracker()
+            # Restore trade history (preserve db and mode for persistence)
+            self.tracker = PerformanceTracker(db=self.db, mode="paper")
             for t in state.get("trades", []):
                 self.tracker.record_trade(
                     ticker=t["ticker"],

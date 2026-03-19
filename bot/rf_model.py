@@ -561,7 +561,12 @@ class RFSignalGenerator:
             model_prob = self.model.predict_probability(features)
             market_price = market.mid_price_yes / 100
 
-            hit_target = market_price >= model_prob * 0.9
+            # YES side: exit when YES price rises to 90% of model value
+            # NO side: exit when YES price drops enough for NO to capture 90% of value
+            if pos.side == "yes":
+                hit_target = market_price >= model_prob * 0.9
+            else:
+                hit_target = market_price <= 1 - (1 - model_prob) * 0.9
             hit_expiry = features["days_to_expiry"] <= 7
 
             if hit_target or hit_expiry:
@@ -592,10 +597,10 @@ class RFSignalGenerator:
         model_prob = self.model.predict_probability(features)
         market_price = market.mid_price_yes / 100
 
-        # Confidence = how far the model's probability is from 50% (maximum uncertainty)
-        # Rescaled to 0-1: at model_prob=0.5 confidence=0, at 0 or 1 confidence=1
-        # Guide rule: only enter when confidence >= 70% (model_prob <= 0.15 or >= 0.85)
-        confidence = abs(model_prob - 0.5) * 2
+        # Confidence = how sure the model is about one side
+        # model_prob >= 0.70 means 70%+ confident YES will happen
+        # model_prob <= 0.30 means 70%+ confident NO will happen (i.e., 1-model_prob >= 0.70)
+        confidence = max(model_prob, 1 - model_prob)
         if confidence < 0.70:
             return None
 
@@ -607,6 +612,10 @@ class RFSignalGenerator:
             side = Side.NO
             edge = (1 - model_prob) - (1 - market_price)
         else:
+            return None
+
+        # Minimum edge filter from config
+        if edge < config.min_edge_threshold:
             return None
 
         # Position sizing: proportional to edge and confidence

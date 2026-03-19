@@ -108,14 +108,17 @@ export default function Testing() {
   // Auto-scan for shadow trading
   useEffect(() => {
     if (autoScan) {
-      intervalRef.current = setInterval(async () => {
+      // Run immediately on toggle, then every 60s
+      const doScan = async () => {
         try {
           const result = await api.paperScan();
           setScanHistory(prev => [result, ...prev].slice(0, 100));
           const state = await api.getPaperState();
           setPaperState(state);
         } catch (e) { /* silent */ }
-      }, 60000); // every 60s
+      };
+      doScan();
+      intervalRef.current = setInterval(doScan, 60000);
     }
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [autoScan]);
