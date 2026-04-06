@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PredictionBot Trading Reports</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0e17; color: #e0e0e0; font-family: 'SF Mono', 'Fira Code', monospace; padding: 20px; }
+  h1 { color: #00ff88; font-size: 24px; margin-bottom: 20px; text-align: center; }
+  .subtitle { color: #888; font-size: 12px; text-align: center; margin-bottom: 30px; }
+  .report { background: #111827; border: 1px solid #1e293b; border-radius: 12px; padding: 20px; margin-bottom: 20px; }
+  .report:first-of-type { border-color: #00ff88; }
+  .report-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+  .report-time { color: #00ff88; font-size: 14px; font-weight: bold; }
+  .report-badge { background: #00ff8820; color: #00ff88; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
+  .report-badge.loss { background: #ff444420; color: #ff4444; }
+  .metric { display: inline-block; margin: 5px 15px 5px 0; }
+  .metric-label { color: #888; font-size: 11px; text-transform: uppercase; }
+  .metric-value { font-size: 18px; font-weight: bold; }
+  .metric-value.green { color: #00ff88; }
+  .metric-value.red { color: #ff4444; }
+  .positions { margin-top: 10px; font-size: 12px; }
+  .positions table { width: 100%; border-collapse: collapse; }
+  .positions th { color: #888; text-align: left; padding: 4px 8px; font-size: 10px; text-transform: uppercase; border-bottom: 1px solid #1e293b; }
+  .positions td { padding: 4px 8px; border-bottom: 1px solid #0f1729; }
+  .positions td.pnl-pos { color: #00ff88; }
+  .positions td.pnl-neg { color: #ff4444; }
+  .back-link { display: inline-block; margin-bottom: 20px; color: #00ff88; text-decoration: none; font-size: 14px; }
+  .back-link:hover { text-decoration: underline; }
+  #no-reports { color: #888; text-align: center; padding: 40px; font-size: 16px; }
+</style>
+</head>
+<body>
+<a href="/" class="back-link">← Back to Dashboard</a>
+<h1>📊 PredictionBot Trading Reports</h1>
+<p class="subtitle">Auto-generated hourly. Most recent report first.</p>
+<div id="reports">
+<div id="no-reports">Loading reports... If none appear, the bot hasn't generated one yet.</div>
+</div>
+<script>
+async function loadReports() {
+  try {
+    const res = await fetch('/api/reports');
+    const data = await res.json();
+    const reports = data.reports || [];
+    const container = document.getElementById('reports');
+    if (reports.length === 0) {
+      container.innerHTML = '<div id="no-reports">No reports yet. First report generates within 1 hour.</div>';
+      return;
+    }
+    container.innerHTML = reports.map((r, i) => {
+      const pnl = r.total - 300;
+      const pnlPct = ((r.total / 300 - 1) * 100).toFixed(1);
+      const isProfit = pnl >= 0;
+      const posRows = (r.positions || []).map(p => {
+        const pnlClass = (p.pnl || 0) >= 0 ? 'pnl-pos' : 'pnl-neg';
+        const pnlStr = (p.pnl || 0) >= 0 ? `+$${(p.pnl/100).toFixed(2)}` : `-$${(Math.abs(p.pnl)/100).toFixed(2)}`;
+        return `<tr><td>${p.side.toUpperCase()}</td><td>${p.title}</td><td>${p.qty}x</td><td>${p.entry}c</td><td class="${pnlClass}">${pnlStr}</td></tr>`;
+      }).join('');
+      return `
+        <div class="report">
+          <div class="report-header">
+            <span class="report-time">${r.timestamp}</span>
+            <span class="report-badge ${isProfit ? '' : 'loss'}">${isProfit ? '+' : ''}$${pnl.toFixed(2)} (${pnlPct}%)</span>
+          </div>
+          <div class="metric"><div class="metric-label">Portfolio</div><div class="metric-value ${isProfit ? 'green' : 'red'}">$${r.total.toFixed(2)}</div></div>
+          <div class="metric"><div class="metric-label">Cash</div><div class="metric-value">$${r.cash.toFixed(2)}</div></div>
+          <div class="metric"><div class="metric-label">Positions</div><div class="metric-value">${r.position_count}</div></div>
+          <div class="metric"><div class="metric-label">Trades</div><div class="metric-value">${r.trades}</div></div>
+          <div class="metric"><div class="metric-label">Crypto</div><div class="metric-value">${r.crypto_count}</div></div>
+          <div class="metric"><div class="metric-label">Errors</div><div class="metric-value">${r.errors}</div></div>
+          ${posRows ? `<div class="positions"><table><tr><th>Side</th><th>Market</th><th>Qty</th><th>Entry</th><th>P&L</th></tr>${posRows}</table></div>` : ''}
+        </div>`;
+    }).join('');
+  } catch (e) {
+    document.getElementById('reports').innerHTML = `<div id="no-reports">Error loading reports: ${e.message}</div>`;
+  }
+}
+loadReports();
+setInterval(loadReports, 60000);
+</script>
+</body>
+</html>

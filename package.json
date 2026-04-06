@@ -1,0 +1,11 @@
+{
+  "name": "prediction-market-bot",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "cd frontend && npm install && npm run build",
+    "dev": "cd frontend && npm run dev"
+  }
+}

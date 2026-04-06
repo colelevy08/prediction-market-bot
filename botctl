@@ -1,0 +1,275 @@
+#!/usr/bin/env bash
+# Prediction Market Bot CLI
+# Usage: ./botctl <command> [args]
+set -euo pipefail
+
+BASE_URL="${BOT_URL:-http://localhost:8000}"
+LOG_FILE="/tmp/predbot.log"
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+_jq() {
+  if command -v jq &>/dev/null; then
+    jq "$@"
+  else
+    cat  # fallback: raw JSON
+  fi
+}
+
+_get() {
+  curl -sf "${BASE_URL}$1" | _jq '.'
+}
+
+_post() {
+  local endpoint="$1"
+  local body="${2:-{}}"
+  curl -sf -X POST "${BASE_URL}${endpoint}" \
+    -H "Content-Type: application/json" \
+    -d "${body}" | _jq '.'
+}
+
+_server_running() {
+  curl -sf "${BASE_URL}/api/status" &>/dev/null
+}
+
+# ── Commands ──────────────────────────────────────────────────────────────────
+
+cmd_status() {
+  echo "→ Server: ${BASE_URL}"
+  if ! _server_running; then
+    echo "✗ Server is not running. Use: ./botctl start"
+    exit 1
+  fi
+  _get "/api/status"
+}
+
+cmd_start() {
+  if _server_running; then
+    echo "✓ Server already running at ${BASE_URL}"
+    return
+  fi
+  echo "→ Starting server..."
+  nohup .venv/bin/python3.12 -m uvicorn bot.server:app --host 0.0.0.0 --port 8000 \
+    >"${LOG_FILE}" 2>&1 &
+  echo "  PID $! — logs: ${LOG_FILE}"
+  echo -n "  Waiting for startup"
+  for i in $(seq 1 20); do
+    sleep 1
+    if _server_running; then
+      echo " ✓"
+      _post "/api/shadow" '{"enabled": true}' > /dev/null
+      cmd_status
+      return
+    fi
+    echo -n "."
+  done
+  echo " ✗ Server did not start. Check: ./botctl logs"
+  exit 1
+}
+
+cmd_stop() {
+  pkill -f "uvicorn bot.server:app" && echo "✓ Server stopped" || echo "No server process found"
+}
+
+cmd_scan() {
+  echo "→ Triggering scan..."
+  _post "/api/scan"
+}
+
+cmd_autoscan() {
+  local state="${1:-}"
+  case "$state" in
+    on|true)   _post "/api/autoscan" '{"enabled": true}'  ;;
+    off|false) _post "/api/autoscan" '{"enabled": false}' ;;
+    *)
+      echo "Current state:"
+      _get "/api/status" | _jq '{auto_scan: .auto_scan_enabled}'
+      echo "Usage: ./botctl autoscan on|off"
+      ;;
+  esac
+}
+
+cmd_autotrade() {
+  local state="${1:-}"
+  case "$state" in
+    on|true)   _post "/api/autotrade" '{"enabled": true}'  ;;
+    off|false) _post "/api/autotrade" '{"enabled": false}' ;;
+    *)
+      echo "Current state:"
+      _get "/api/status" | _jq '{auto_trade: .auto_trade_enabled}'
+      echo "Usage: ./botctl autotrade on|off"
+      ;;
+  esac
+}
+
+cmd_positions() {
+  echo "→ Open positions:"
+  _get "/api/portfolio" | _jq '.positions // []'
+}
+
+cmd_portfolio() {
+  echo "→ Portfolio:"
+  _get "/api/portfolio" | _jq '{
+    balance_usd: (.balance_cents / 100),
+    open_positions: (.positions | length),
+    positions: .positions
+  }'
+}
+
+cmd_trades() {
+  echo "→ Recent live trades (last 20):"
+  _get "/api/history/trades" | _jq '.trades // . | .[-20:]'
+}
+
+cmd_signals() {
+  echo "→ Latest signals:"
+  _get "/api/signals" | _jq '.signals // . | .[:10]'
+}
+
+cmd_paper() {
+  echo "→ Paper trading:"
+  _get "/api/paper" | _jq '.'
+}
+
+cmd_performance() {
+  echo "→ Performance:"
+  _get "/api/performance" | _jq '.'
+}
+
+cmd_cryptostats() {
+  echo "→ Crypto per-hour and per-coin stats:"
+  _get "/api/crypto/stats" | _jq '.'
+}
+
+cmd_arbitrage() {
+  echo "→ Arbitrage opportunities:"
+  _get "/api/arbitrage" | _jq '.'
+}
+
+cmd_logs() {
+  if [[ -f "${LOG_FILE}" ]]; then
+    echo "→ Server log (${LOG_FILE}, last 50 lines):"
+    tail -n 50 "${LOG_FILE}"
+  else
+    echo "No log file at ${LOG_FILE}. Server may have been started differently."
+  fi
+}
+
+cmd_config() {
+  if [[ $# -eq 0 ]]; then
+    echo "→ Current config:"
+    _get "/api/status" | _jq '.config // {}'
+  else
+    echo "→ Updating config: $1"
+    curl -sf -X PATCH "${BASE_URL}/api/config" \
+      -H "Content-Type: application/json" \
+      -d "$1" | _jq '.'
+  fi
+}
+
+cmd_shadow() {
+  local state="${1:-}"
+  case "$state" in
+    on|true)   _post "/api/shadow" '{"enabled": true}'  ;;
+    off|false) _post "/api/shadow" '{"enabled": false}' ;;
+    reset)     _post "/api/shadow/reset" ;;
+    *)
+      echo "→ Shadow crypto trader:"
+      _get "/api/shadow" | _jq '{
+        enabled: .enabled,
+        balance_usd: (.balance_cents / 100),
+        open_positions: .open_positions,
+        total_trades: .total_trades,
+        wins: .wins,
+        losses: .losses,
+        win_rate: .win_rate,
+        total_pnl_usd: (.total_pnl_cents / 100),
+        positions: .positions
+      }'
+      echo "Usage: ./botctl shadow on|off|reset"
+      ;;
+  esac
+}
+
+cmd_stop_trading() {
+  echo "→ Emergency stop: disabling auto-trade, auto-scan, and shadow..."
+  _post "/api/autotrade" '{"enabled": false}'
+  _post "/api/autoscan" '{"enabled": false}'
+  _post "/api/shadow" '{"enabled": false}'
+  echo "✓ All trading stopped"
+}
+
+cmd_help() {
+  cat <<'EOF'
+Prediction Market Bot CLI
+
+Usage: ./botctl <command> [args]
+
+Commands:
+  status              Server health, mode (demo/prod), balance, flags
+  start               Start local server in background (logs → /tmp/predbot.log)
+  stop                Kill local server process
+  scan                Trigger a manual RF scan now
+  autoscan on|off     Toggle background auto-scan loop
+  autotrade on|off    Toggle live order execution (requires autoscan on)
+  shadow on|off|reset Shadow crypto trader (same strategy, no real orders)
+  positions           Current open Kalshi positions
+  portfolio           Balance + all open positions
+  trades              Recent live trade log (last 20)
+  signals             Latest trading signals from last scan
+  paper               RF/ML paper trading positions and stats
+  performance         P&L, win rate, Sharpe ratio
+  cryptostats         Per-hour and per-coin win rate stats
+  arbitrage           Kalshi vs DraftKings cross-platform opportunities
+  logs                Tail server log (last 50 lines)
+  config [JSON]       Show current config or patch with JSON body
+  stop-trading        Emergency stop: disable auto-trade, auto-scan, and shadow
+  help                Show this message
+
+Shadow trader runs the exact same quant strategy as the live trader:
+  - Same 5 signals (consensus, price/floor_strike, tod, funding, imbalance)
+  - Same 65/35 thresholds with hourly self-optimization
+  - Same fee-aware Kelly sizing ($2-$15)
+  - Same 75% stop-loss
+  Can run in parallel with live trader for real-time benchmarking.
+
+Examples:
+  ./botctl shadow on            # Start shadow trading
+  ./botctl shadow               # View positions + P&L
+  ./botctl shadow reset         # Clear history, restore $100 balance
+  ./botctl autotrade on         # Start live trading (parallel with shadow)
+  ./botctl config '{"max_bet_amount_cents": 500}'
+EOF
+}
+
+# ── Dispatch ──────────────────────────────────────────────────────────────────
+
+COMMAND="${1:-help}"
+shift || true
+
+case "$COMMAND" in
+  status)         cmd_status ;;
+  start)          cmd_start ;;
+  stop)           cmd_stop ;;
+  scan)           cmd_scan ;;
+  autoscan)       cmd_autoscan "${@:-}" ;;
+  autotrade)      cmd_autotrade "${@:-}" ;;
+  shadow)         cmd_shadow "${@:-}" ;;
+  positions)      cmd_positions ;;
+  portfolio)      cmd_portfolio ;;
+  trades)         cmd_trades ;;
+  signals)        cmd_signals ;;
+  paper)          cmd_paper ;;
+  performance)    cmd_performance ;;
+  cryptostats)    cmd_cryptostats ;;
+  arbitrage)      cmd_arbitrage ;;
+  logs)           cmd_logs ;;
+  config)         cmd_config "${@:-}" ;;
+  stop-trading)   cmd_stop_trading ;;
+  help|--help|-h) cmd_help ;;
+  *)
+    echo "Unknown command: $COMMAND"
+    echo "Run ./botctl help for usage."
+    exit 1
+    ;;
+esac

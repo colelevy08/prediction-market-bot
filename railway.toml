@@ -1,0 +1,27 @@
+# ============================================================================
+# Railway Deployment Configuration
+# ============================================================================
+# The FastAPI backend deploys to Railway using a Dockerfile.
+#
+# Environment variables must be set in the Railway dashboard:
+#   - KALSHI_API_KEY_ID
+#   - KALSHI_PRIVATE_KEY (raw PEM content, not file path)
+#   - KALSHI_USE_DEMO=true
+#   - ANTHROPIC_API_KEY
+#   - SUPABASE_URL
+#   - SUPABASE_KEY
+#   - SLACK_WEBHOOK_URL (optional)
+#   - DISCORD_WEBHOOK_URL (optional)
+#   - WEBHOOK_SECRET (optional)
+#   - AUTO_SCAN_ON_BOOT=true (auto-start scanning after model trains)
+# ============================================================================
+
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/api/status"
+healthcheckTimeout = 60
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
